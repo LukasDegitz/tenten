@@ -23,9 +23,13 @@ class Session:
         print(self.score)
         print(self.board)
         for p in self.pieces:
+            print(p)
             print(pieces[p])
 
-    def take_action(self, action=Action):
+    def get_state(self):
+        return self.piece_vector, self.position_mask
+
+    def take_action(self, action: Action):
 
         if action.p_id not in self.pieces or action.p_id > len(pieces):
             return -1
@@ -38,6 +42,7 @@ class Session:
         #else peice fitted and board was updated
         step_score = self.clear_rows() + piece.sum()
 
+        self.score += step_score
         #remove used piece
         self._remove_piece(action.p_id)
 
@@ -46,7 +51,7 @@ class Session:
 
         if np.multiply(self.piece_vector.reshape((19, 1, 1)), self.position_mask).sum() == 0:
             #game over - no more possible moves
-            self.score += step_score
+
             return -1000
 
         return step_score
@@ -56,10 +61,10 @@ class Session:
 
         piece_shape = np.shape(piece)
         # check if selected piece fits to selected position
-        if any(np.sum((piece_shape, position), axis=0) > 10):
+        if any(np.sum((piece_shape, (position.i, position.j)), axis=0) > 10):
             return False
 
-        if any(self.board[position.i:position.i + piece_shape[0], position.j:position.j + piece_shape[1]] + piece > 1):
+        if (self.board[position.i:position.i + piece_shape[0], position.j:position.j + piece_shape[1]] + piece > 1).any():
             return False
 
         # place piece on board
@@ -76,7 +81,7 @@ class Session:
         self.board[:, b_js] = 0
 
         #score
-        return little_gauss(len(b_is)+len(b_js))
+        return little_gauss(len(b_is)+len(b_js)) * 10
 
     def _update_position_mask(self):
 
@@ -87,9 +92,9 @@ class Session:
             possible_pos = np.where(position_matrix == 1)
             possible_pos_is, possible_pos_js = possible_pos[0], possible_pos[1]
 
-            for possible_pos in zip(possible_pos_is, possible_pos_js):
-                if not self.piece_fits_position(piece, possible_pos, update=False):
-                    position_matrix[possible_pos] = 0
+            for i, j in zip(possible_pos_is, possible_pos_js):
+                if not self.piece_fits_position(piece, Position(i, j), update=False):
+                    position_matrix[i, j] = 0
 
     def _remove_piece(self, pid):
 

@@ -1,5 +1,6 @@
 import numpy as np
 import random as rd
+import torch
 from collections import namedtuple
 
 pieces = [
@@ -27,6 +28,7 @@ pieces = [
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
+State = namedtuple("State", ["piece_mask", "position_mask"])
 
 def get_pieces():
     return rd.choices(range(len(pieces)), k=3)
@@ -36,6 +38,15 @@ def little_gauss(n):
     #Bester Mann!!
     return int((n*n + n)/2)
 
+
+def transform_state(state: State):
+    state_arr = np.append(state.position_mask.reshape((1900,)), state.piece_mask)
+    state_mask = np.multiply(state.piece_mask.reshape((19, 1, 1)), state.position_mask).reshape((1900,))
+    return torch.tensor(state_arr), torch.tensor(state_mask)
+
+def parse_state(state_tensor: torch.Tensor):
+    state_arr = state_tensor.numpy()
+    return State(state_arr[1900, :], state_arr[:, 1900].reshape((19, 10, 10)))
 
 base_position_mask = np.array(
     [
