@@ -40,13 +40,15 @@ def little_gauss(n):
 
 
 def transform_state(state: State):
-    state_arr = np.append(state.position_mask.reshape((1900,)), state.piece_mask)
-    state_mask = np.multiply(state.piece_mask.reshape((19, 1, 1)), state.position_mask).reshape((1900,))
-    return torch.tensor(state_arr), torch.tensor(state_mask)
+    state_arr = np.append(state.position_mask.reshape((1900, )), state.piece_mask)
+    state_mask = np.multiply(state.piece_mask.reshape((19, 1, 1)), state.position_mask).reshape((1900, ))
+    return torch.tensor(state_arr, dtype=torch.float).unsqueeze(0), torch.tensor(state_mask, dtype=torch.float).unsqueeze(0)
 
-def parse_state(state_tensor: torch.Tensor):
-    state_arr = state_tensor.numpy()
-    return State(state_arr[1900, :], state_arr[:, 1900].reshape((19, 10, 10)))
+def parse_action(action_tensor: torch.Tensor):
+    array_idm = action_tensor.item()
+    p_id, pos_arr = divmod(array_idm, 100)
+    i,j = divmod(pos_arr, 10)
+    return Action(p_id, Position(i, j))
 
 base_position_mask = np.array(
     [

@@ -1,5 +1,5 @@
 import numpy as np
-from utils import get_pieces, Action, Position, little_gauss, base_position_mask, pieces
+from utils import get_pieces, Action, Position, State, little_gauss, base_position_mask, pieces
 
 class Session:
 
@@ -12,7 +12,7 @@ class Session:
     piece_vector = None
 
     def __init__(self):
-        self.board = np.zeros((10, 10), dtype=int)
+        self.board = np.zeros((10, 10))
         self.pieces = get_pieces()
         self.score = 0
         self.lost = False
@@ -27,7 +27,7 @@ class Session:
             print(pieces[p])
 
     def get_state(self):
-        return self.piece_vector, self.position_mask
+        return State(self.piece_vector, self.position_mask)
 
     def take_action(self, action: Action):
 
@@ -51,7 +51,7 @@ class Session:
 
         if np.multiply(self.piece_vector.reshape((19, 1, 1)), self.position_mask).sum() == 0:
             #game over - no more possible moves
-
+            self.lost = True
             return -1000
 
         return step_score

@@ -27,12 +27,10 @@ class DQN(torch.nn.Module):
 
         self.device = device
         # base
+        # try adding dropout to avoid overfitting
         self.ln1 = torch.nn.Linear(in_features=1919, out_features=2048)
-        self.bn1 = torch.nn.BatchNorm1d(2048)
         self.ln2 = torch.nn.Linear(in_features=2048, out_features=2048)
-        self.bn2 = torch.nn.BatchNorm1d(1024)
         self.ln3 = torch.nn.Linear(in_features=2048, out_features=2048)
-        self.bn3 = torch.nn.BatchNorm1d(512)
 
         #one layer for piece selection and one for position
         #self.l_piece = torch.nn.Linear(in_features=512, out_features=19)
@@ -40,12 +38,14 @@ class DQN(torch.nn.Module):
 
         self.sig = torch.nn.Sigmoid()
         self.rel = torch.nn.ReLU()
+        self.do = torch.nn.Dropout()
 
 
     def forward(self, x):
         x = x.to(self.device)
-        x = self.rel(self.bn1(self.ln1(x)))
-        x = self.rel(self.bn2(self.ln2(x)))
-        x = self.rel(self.bn3(self.ln3(x)))
-
-        return self.sig(self.l_pos(x))
+        #print(x.size(), x.type())
+        x = self.rel(self.ln1(x))
+        x = self.rel(self.ln2(x))
+        x = self.rel(self.ln3(x))
+        #x = self.ln3(self.ln2(self.ln1(x)))
+        return self.l_pos(x)
