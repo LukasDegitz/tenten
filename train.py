@@ -6,7 +6,7 @@ from game import Session
 TARGET_UPDATE = 10
 optim_every = 5
 device = 'cuda'
-max_eps = 500
+max_eps = 2000
 
 max_score = {'e': -1, 's': 0}
 
@@ -35,7 +35,7 @@ while agent.games_played < max_eps:
             if session.score > max_score['s']:
                 max_score['e'] = agent.games_played
                 max_score['s'] = session.score
-                print('Max Score - %i: %i (%i)' % (agent.games_played, session.score, t))
+                print('%i - Max Score: %i  | %i' % (agent.games_played, session.score, t))
             agent.games_played += 1
             break
 

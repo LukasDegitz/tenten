@@ -27,7 +27,7 @@ class Agent(object):
     EPS_END = None
     EPS_DECAY = None
 
-    def __init__(self, device, batch_size=128, gamma=0.999, eps_start=0.9, eps_end=0.05, eps_decay=200):
+    def __init__(self, device, batch_size=128, gamma=0.999, eps_start=0.9, eps_end=0.05, eps_decay=500):
 
         self.device = device
         self.policy_net = DQN(device).to(device)
