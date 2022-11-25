@@ -28,7 +28,7 @@ class GameUI(object):
 
         for t in range(100):
             i, j = divmod(t, 10)
-            self.board_button_array[t] = Button(self.board_grid, width=2, height=1,
+            self.board_button_array[t] = Button(self.board_grid, width=4, height=2,
                                                 command=lambda m=t: self.board_button_pressed(m), bg="white")
             #if i+j == 11:
             #    self.board_button_array[t].config(bg = "black")
@@ -43,11 +43,11 @@ class GameUI(object):
         self.score_text.config(text="Score: %i" % self.session.score)
 
         self.piece_button_array = [1, 2, 3]
-        self.piece_button_array[0] = Button(self.piece_grid,  width=25, command=lambda: self.piece_button_pressed(0))
+        self.piece_button_array[0] = Button(self.piece_grid,  width=50, command=lambda: self.piece_button_pressed(0))
         self.piece_button_array[0].grid(column=0, row=1)
-        self.piece_button_array[1] = Button(self.piece_grid,  width=25, command=lambda: self.piece_button_pressed(1))
+        self.piece_button_array[1] = Button(self.piece_grid,  width=50, command=lambda: self.piece_button_pressed(1))
         self.piece_button_array[1].grid(column=1, row=1)
-        self.piece_button_array[2] = Button(self.piece_grid,  width=25, command=lambda: self.piece_button_pressed(2))
+        self.piece_button_array[2] = Button(self.piece_grid,  width=50, command=lambda: self.piece_button_pressed(2))
         self.piece_button_array[2].grid(column=2, row=1)
 
         self.piece_grid_array = [[r for r in range(25)],
@@ -63,15 +63,15 @@ class GameUI(object):
 
         for r in range(25):
             i, j = divmod(r, 5)
-            self.piece_grid_array[0][r] = Label(self.piece1_grid, height=1, width=2)
+            self.piece_grid_array[0][r] = Label(self.piece1_grid, height=2, width=4)
             self.piece_grid_array[0][r].config(bg="white")
             self.piece_grid_array[0][r].grid(column=j, row=i)
 
-            self.piece_grid_array[1][r] = Label(self.piece2_grid, height=1, width=2)
+            self.piece_grid_array[1][r] = Label(self.piece2_grid, height=2, width=4)
             self.piece_grid_array[1][r].config(bg="white")
             self.piece_grid_array[1][r].grid(column=j, row=i)
 
-            self.piece_grid_array[2][r] = Label(self.piece3_grid, height=1, width=2)
+            self.piece_grid_array[2][r] = Label(self.piece3_grid, height=2, width=4)
             self.piece_grid_array[2][r].config(bg="white")
             self.piece_grid_array[2][r].grid(column=j, row=i)
 
