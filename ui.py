@@ -165,7 +165,7 @@ class GameUI(object):
                 if i < len(state_pieces):
                     p[i] = state_pieces[i]
             f.write('%i|%i|%i|%i|%i|%i|%i|%s\n' % (action.p_id, action.pos.i, action.pos.j, reward, p[0], p[1], p[2],
-                                        np.array_str(state_board.reshape((100)))))
+                                        np.array_str(state_board.reshape((100)), max_line_width=500)))
 
     def show(self):
         self.root.mainloop()
