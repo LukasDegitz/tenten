@@ -1,5 +1,5 @@
 import numpy as np
-from utils import get_pieces, Action, Position, State, little_gauss, base_position_mask, pieces
+from utils import get_pieces, Action, Position, State, little_gauss, base_position_mask, pieces, transformed_pieces
 
 class Session:
 
@@ -31,18 +31,27 @@ class Session:
 
     def take_action(self, action: Action):
 
-        if action.p_id not in self.pieces or action.p_id > len(pieces):
-            return -1
-        piece = pieces[action.p_id]
+        piece_id, target_position = action.p_id, action.pos
 
-        fits = self.piece_fits_position(piece, action.pos, update=True)
-        if not fits:
+        # check if the action is valid
+        if piece_id not in self.pieces or piece_id > len(pieces):
             return -1
+
+        piece = pieces[piece_id]
+        piece_shape = np.shape(piece)
+
+        # check if piece fits into the desired position
+        if self.position_mask[piece_id, target_position.i, target_position.j] == 0:
+            return -1
+
+        # update the board
+        self.board[target_position.i:target_position.i + piece_shape[0],
+                   target_position.j:target_position.j + piece_shape[1]] += piece
 
         #else peice fitted and board was updated
         step_score = self.clear_rows() + piece.sum()
-
         self.score += step_score
+
         #remove used piece
         self._remove_piece(action.p_id)
 
@@ -57,22 +66,6 @@ class Session:
         return step_score
 
 
-    def piece_fits_position(self, piece, position: Position, update=False):
-
-        piece_shape = np.shape(piece)
-        # check if selected piece fits to selected position
-        if any(np.sum((piece_shape, (position.i, position.j)), axis=0) > 10):
-            return False
-
-        if (self.board[position.i:position.i + piece_shape[0], position.j:position.j + piece_shape[1]] + piece > 1).any():
-            return False
-
-        # place piece on board
-        if update:
-            self.board[position.i:position.i + piece_shape[0], position.j:position.j + piece_shape[1]] += piece
-
-        return True
-
     def clear_rows(self):
 
         #clear full rows/cols
@@ -85,16 +78,17 @@ class Session:
 
     def _update_position_mask(self):
 
-        board_inv = self._invert_board()
-        self.position_mask = np.multiply(board_inv, base_position_mask)
+        #invert and transform board
+        board_inv = np.logical_not(self.board).astype(int)
+        board_trans = np.fft.fft2(board_inv)
 
-        for piece, position_matrix in zip(pieces, self.position_mask):
-            possible_pos = np.where(position_matrix == 1)
-            possible_pos_is, possible_pos_js = possible_pos[0], possible_pos[1]
+        # convolute all possible pieces with the inverted board to get the mask of all possible
+        # positions. Make use of the fft convolution trick.
+        for piece_id, (piece, piece_trans) in enumerate(zip(pieces, transformed_pieces)):
 
-            for i, j in zip(possible_pos_is, possible_pos_js):
-                if not self.piece_fits_position(piece, Position(i, j), update=False):
-                    position_matrix[i, j] = 0
+            self.position_mask[piece_id] = (np.real(np.fft.ifft2(board_trans*np.conj(piece_trans))) >= piece.sum()).astype(int)
+
+        self.position_mask = np.multiply(self.position_mask, base_position_mask)
 
     def _remove_piece(self, pid):
 
@@ -107,9 +101,6 @@ class Session:
             self.pieces = get_pieces()
 
         self._update_piece_vector()
-
-    def _invert_board(self):
-        return np.logical_not(self.board).astype(int)
 
     def _update_piece_vector(self):
         self.piece_vector = np.zeros((19,))

@@ -24,7 +24,9 @@ pieces = [
     np.array([[0, 0, 1], [0, 0, 1], [1, 1, 1]]),
     np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]]),
 ]
-
+#pad and transform pieces for fft convolution
+transformed_pieces = [np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
+                      for p in pieces]
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
