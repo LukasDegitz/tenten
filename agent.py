@@ -1,9 +1,11 @@
-from dql import DQN, ReplayMemory, Transition
-from utils import State, transform_state, parse_action
+import numpy as np
+
+from dql import D3QN, ReplayMemory, Transition
+from utils import State, Action, Position, make_state
 import torch
 import random
 import math
-
+import os
 
 
 class Agent(object):
@@ -21,22 +23,25 @@ class Agent(object):
     highscore = None
 
     # training params
+    ALPHA = None
     BATCH_SIZE = None
     GAMMA = None
     EPS_START = None
     EPS_END = None
     EPS_DECAY = None
 
-    def __init__(self, device, batch_size=128, gamma=0.999, eps_start=0.9, eps_end=0.05, eps_decay=500):
+    def __init__(self, device='cuda', batch_size=64, gamma=0.99, eps_start=0.9,
+                 eps_end=0.05, eps_decay=1000, lr=1e-4, alpha=0.5):
 
         self.device = device
-        self.policy_net = DQN(device).to(device)
-        self.target_net = DQN(device).to(device)
+        # double deep q learning - decouple action value estimation from q value estimation
+        self.policy_net = D3QN(device).to(device)
+        self.target_net = D3QN(device).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
         self.loss = torch.nn.SmoothL1Loss()
-        self.optimizer = torch.optim.RMSprop(self.policy_net.parameters())
+        self.optimizer = torch.optim.AdamW(self.policy_net.parameters(), lr=lr, amsgrad=True)
         self.memory = ReplayMemory(10000)
         self.mem_cache = {}
 
@@ -49,6 +54,7 @@ class Agent(object):
         self.EPS_START = eps_start
         self.EPS_END = eps_end
         self.EPS_DECAY = eps_decay
+        self.ALPHA = alpha
 
     def select_action(self, state: State):
         sample = random.random()
@@ -57,33 +63,38 @@ class Agent(object):
                         math.exp(-1. * self.actions_taken / self.EPS_DECAY)
 
         self.actions_taken += 1
-
-        state_t, state_m = transform_state(state)
-        state_t = state_t.to(self.device)
-        state_m = state_m.to(self.device)
+        state = State(state.pieces.to(self.device), state.board.to(self.device), state.board_mask.to(self.device))
 
         #not a starting state
         if 'reward' in self.mem_cache:
-            self.mem_cache['next_state'] = state_t
-            self.mem_cache['next_state_mask'] = state_m
+            self.mem_cache['next_state'] = state
             self._push_cache()
 
-        self.mem_cache['state'] = state_t
+        self.mem_cache['state'] = state
 
         if sample > eps_threshold:
+
             with torch.no_grad():
-                # t.max(1) will return largest column value of each row.
-                # second column on max result is index of where max element was
-                # found, so we pick action with the larger expected reward.
+                #print('pred')
+                q_piece, q_pos = self.policy_net(state.pieces, state.board, state.board_mask)
 
-                p_pos = self.policy_net(state_t)
+
         else:
-            p_pos = torch.randn(1900).to(self.device)
+            #print('rand')
+            q_piece = torch.sigmoid(torch.randn((1, 19))).to(self.device)
+            #q_rand = torch.sigmoid(torch.randn((19, 100))).to(self.device)
+            q_piece = q_piece * state.pieces * (state.board_mask.sum(2) >= 1)
+            p_id = q_piece.argmax(1)
+            q_pos = torch.sigmoid(torch.randn((1, 100))).to(self.device)
+            q_pos *= state.board_mask[0, p_id, :]
 
-        p_pos_masked = p_pos * state_m
-        action = torch.argmax(p_pos_masked)
-        self.mem_cache['action'] = action.unsqueeze(0)
-        return parse_action(action)
+
+        p_id = q_piece.argmax(1)
+        pos_id = q_pos.argmax(1)
+        self.mem_cache['action'] = (p_id.unsqueeze(0), pos_id.unsqueeze(0))
+
+        i, j = divmod(pos_id.item(), 10)
+        return Action(p_id.item(), Position(i, j))
 
     def optimize_model(self):
 
@@ -96,25 +107,39 @@ class Agent(object):
         # to Transition of batch-arrays.
         batch = Transition(*zip(*transitions))
 
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
-        next_state_batch = torch.cat(batch.next_state)
-        next_state_mask_batch = torch.cat(batch.next_state_mask)
+        board_state_batch = torch.cat([state.board for state in batch.state], 0)
+        board_mask_batch = torch.cat([state.board_mask for state in batch.state], 0)
+        piece_state_batch = torch.cat([state.pieces for state in batch.state], 0)
+        piece_action_batch = torch.cat([action[0] for action in batch.action], 0)
+        board_action_batch = torch.cat([action[1] for action in batch.action], 0)
+        reward_batch = torch.cat(batch.reward, 0)
+        next_board_state_batch = torch.cat([state.board for state in batch.next_state], 0)
+        next_board_mask_batch = torch.cat([state.board_mask for state in batch.next_state], 0)
+        next_piece_state_batch = torch.cat([state.pieces for state in batch.next_state], 0)
 
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
-        state_action_values = self.policy_net(state_batch).gather(1, action_batch.unsqueeze(1))
+        piece_action_values, board_action_values = \
+            self.policy_net(piece_state_batch, board_state_batch, board_mask_batch)
+        selected_piece_action_values = piece_action_values.gather(1, piece_action_batch)
+        selected_board_action_values = board_action_values.gather(1, board_action_batch)
+        state_action_values = (selected_piece_action_values * self.ALPHA + selected_board_action_values * (1 - self.ALPHA))
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
         # on the "older" target_net; selecting their best reward with max(1)[0].
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
-        next_state_values = (self.target_net(next_state_batch) * next_state_mask_batch).max(1)[0].detach()
+        next_piece_state_value, next_board_state_value = \
+            self.target_net(next_piece_state_batch, next_board_state_batch, next_board_mask_batch)
+
+        next_piece_state_value, next_board_state_value = \
+            next_piece_state_value.max(1)[0].detach(), next_board_state_value.max(1)[0].detach()
+
         # Compute the expected Q values
-        expected_state_action_values = (next_state_values * self.GAMMA) + reward_batch
+        expected_state_action_values = \
+            ((next_piece_state_value * self.ALPHA + next_piece_state_value * (1 - self.ALPHA)) * self.GAMMA) + reward_batch
 
         # Compute Huber loss
         loss = self.loss(state_action_values, expected_state_action_values.unsqueeze(1))
@@ -122,31 +147,79 @@ class Agent(object):
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
-        for param in self.policy_net.parameters():
-            param.grad.data.clamp_(-1, 1)
+        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
+        #for param in self.policy_net.parameters():
+        #    param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
+
+
     def update_target(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+        # soft update
+        target_net_state_dict = self.target_net.state_dict()
+        policy_net_state_dict = self.policy_net.state_dict()
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[key] * 0.005 + target_net_state_dict[key] * (1 - 0.005)
+        self.target_net.load_state_dict(target_net_state_dict)
 
     def put_reward(self, reward, losing_state: State = None):
 
         self.mem_cache['reward'] = torch.tensor([reward], dtype=torch.float).to(self.device)
 
         if losing_state:
-            state_t, state_m = transform_state(losing_state)
-            state_t = state_t.to(self.device)
-            state_m = state_m.to(self.device)
-            self.mem_cache['next_state'] = state_t
-            self.mem_cache['next_state_mask'] = state_m
+            losing_state = State(losing_state.pieces.to(self.device), losing_state.board.to(self.device),
+                                 losing_state.board_mask.to(self.device))
+            self.mem_cache['next_state'] = losing_state
             self._push_cache()
 
+#TBD
+    def init_memory(self, target_path):
+
+        if not os.path.exists(target_path):
+            return
+        print('initializing memory from: '+target_path)
+        i = 0
+        for file in os.listdir(target_path):
+
+            file_path = os.path.join(target_path, file)
+
+            with open(file_path, 'r') as r_file:
+                for line in r_file:
+                    if line == 'act_p_id|act_pos_i|act_pos_j|reward|s_p0|s_p1|s_p2|board_state\n':
+                        continue
+                    act_p_id, act_pos_i, act_pos_j, reward, s_p0, s_p1, s_p2, board_state = line.split('|')
+                    board_state = board_state.replace('\n', '').replace(']', '').replace('[', '')
+                    reward, s_p0, s_p1, s_p2 = int(reward), int(s_p0), int(s_p1), int(s_p2)
+                    board_state = np.fromstring(board_state, sep=' ').reshape((10, 10))
+
+                    state = make_state(board_state, [s_p0, s_p1, s_p2])
+                    state_repr, state_mask = state.repr, state.mask
+
+                    state_repr = state_repr.to(self.device)
+                    state_mask = state_mask.to(self.device)
+
+                    # not a starting state
+                    if 'reward' in self.mem_cache:
+                        self.mem_cache['next_state'] = state_repr
+                        self.mem_cache['next_state_mask'] = state_mask
+                        self._push_cache()
+
+                    self.mem_cache['state'] = state_repr
+                    action = torch.tensor(int(act_p_id+act_pos_i+act_pos_j)).to(self.device)
+                    self.mem_cache['action'] = action.unsqueeze(0)
+                    self.mem_cache['reward'] = torch.tensor([reward], dtype=torch.float).to(self.device)
+                    #print(board_state)
+
+            self.mem_cache = {}
+
+
     def _push_cache(self):
-        if len(self.mem_cache) != 5:
+        if len(self.mem_cache) != 4:
             print('Memory error, clearing cache. Memory of step is lost!')
             self.mem_cache = {}
             return
 
-        self.memory.push(self.mem_cache['state'], self.mem_cache['action'], self.mem_cache['next_state'],
-                         self.mem_cache['next_state_mask'], self.mem_cache['reward'])
+        self.memory.push(self.mem_cache['state'], self.mem_cache['action'], self.mem_cache['next_state']
+                         , self.mem_cache['reward'])
         self.mem_cache = {}
+

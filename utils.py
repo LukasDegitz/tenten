@@ -30,7 +30,7 @@ transformed_pieces = [np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
-State = namedtuple("State", ["piece_mask", "position_mask"])
+State = namedtuple("State", ["pieces", "board", "board_mask"])
 
 def get_pieces():
     return rd.choices(range(len(pieces)), k=3)
@@ -40,17 +40,33 @@ def little_gauss(n):
     #Bester Mann!!
     return int((n*n + n)/2)
 
-
-def transform_state(state: State):
-    state_arr = np.append(state.position_mask.reshape((1900, )), state.piece_mask)
-    state_mask = np.multiply(state.piece_mask.reshape((19, 1, 1)), state.position_mask).reshape((1900, ))
-    return torch.tensor(state_arr, dtype=torch.float).unsqueeze(0), torch.tensor(state_mask, dtype=torch.float).unsqueeze(0)
-
 def parse_action(action_tensor: torch.Tensor):
     array_idm = action_tensor.item()
     p_id, pos_arr = divmod(array_idm, 100)
     i,j = divmod(pos_arr, 10)
     return Action(p_id, Position(i, j))
+
+def make_state(board, piece_selection):
+
+    board_inv = np.logical_not(board).astype(int)
+    board_trans = np.fft.fft2(board_inv)
+    position_repr, position_mask = np.zeros((19, 10, 10)), np.zeros((19, 10, 10))
+    piece_vector = np.zeros((19,))
+    # convolute all possible pieces with the inverted board to get the mask of all possible
+    # positions. Make use of the fft convolution trick.
+    for piece_id, (piece, piece_trans) in enumerate(zip(pieces, transformed_pieces)):
+        if piece_id not in piece_selection:
+            continue
+        piece_vector[piece_id] = piece_selection.count(piece_id)
+        position_repr[piece_id] = np.fft.ifft2(board_trans * np.conj(piece_trans))
+        position_mask[piece_id] = (np.real(position_repr[piece_id]) >= piece.sum()).astype(int)
+
+    position_mask = np.multiply(position_mask, base_position_mask)
+
+    state_mask = position_mask.reshape((1900,))
+    state_repr = np.append(position_repr.reshape((1900,)) * state_mask, piece_vector)
+    return State(torch.tensor(state_repr, dtype=torch.float).unsqueeze(0),
+                 torch.tensor(state_mask, dtype=torch.float).unsqueeze(0))
 
 base_position_mask = np.array(
     [

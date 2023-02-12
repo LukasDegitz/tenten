@@ -1,5 +1,6 @@
 import numpy as np
 from utils import get_pieces, Action, Position, State, little_gauss, base_position_mask, pieces, transformed_pieces
+import torch
 
 class Session:
 
@@ -9,14 +10,18 @@ class Session:
     lost = None
 
     position_mask = None
+    position_repr = None
     piece_vector = None
+    piece_mask = None
 
     def __init__(self):
         self.board = np.zeros((10, 10))
         self.pieces = get_pieces()
         self.score = 0
         self.lost = False
-        self.position_mask = base_position_mask.copy()
+        self.position_mask = np.zeros((19, 10, 10))
+        self.position_repr = np.zeros((19, 10, 10))
+        self._update_position_mask()
         self._update_piece_vector()
 
     def print_state(self):
@@ -27,7 +32,9 @@ class Session:
             print(pieces[p])
 
     def get_state(self):
-        return State(self.piece_vector, self.position_mask)
+        return State(torch.tensor(self.piece_mask).unsqueeze(0),
+                     torch.tensor(self.position_repr, dtype=torch.float).unsqueeze(0),
+                     torch.tensor(self.position_mask).reshape((19, 100)).unsqueeze(0))
 
     def take_action(self, action: Action):
 
@@ -35,6 +42,7 @@ class Session:
 
         # check if the action is valid
         if piece_id not in self.pieces or piece_id > len(pieces):
+            print('invalid piece')
             return -1
 
         piece = pieces[piece_id]
@@ -42,6 +50,7 @@ class Session:
 
         # check if piece fits into the desired position
         if self.position_mask[piece_id, target_position.i, target_position.j] == 0:
+            print(piece, target_position, self.board)
             return -1
 
         # update the board
@@ -86,7 +95,8 @@ class Session:
         # positions. Make use of the fft convolution trick.
         for piece_id, (piece, piece_trans) in enumerate(zip(pieces, transformed_pieces)):
 
-            self.position_mask[piece_id] = (np.real(np.fft.ifft2(board_trans*np.conj(piece_trans))) >= piece.sum()).astype(int)
+            self.position_repr[piece_id] = np.fft.ifft2(board_trans * np.conj(piece_trans))
+            self.position_mask[piece_id] = (np.real(self.position_repr[piece_id]) >= piece.sum()).astype(int)
 
         self.position_mask = np.multiply(self.position_mask, base_position_mask)
 
@@ -104,5 +114,7 @@ class Session:
 
     def _update_piece_vector(self):
         self.piece_vector = np.zeros((19,))
+        self.piece_mask = np.zeros((19,))
         for piece in self.pieces:
-            self.piece_vector[piece] = 1
+            self.piece_vector[piece] += 1
+            self.piece_mask[piece] = 1
