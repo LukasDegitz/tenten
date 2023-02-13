@@ -68,6 +68,11 @@ def make_state(board, piece_selection):
     return State(torch.tensor(state_repr, dtype=torch.float).unsqueeze(0),
                  torch.tensor(state_mask, dtype=torch.float).unsqueeze(0))
 
+
+def sigmoid_mask(x: torch.Tensor, mask: torch.Tensor = 1):
+
+    return torch.sigmoid(x) * mask
+
 base_position_mask = np.array(
     [
         [

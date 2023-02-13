@@ -20,7 +20,7 @@ class Session:
         self.score = 0
         self.lost = False
         self.position_mask = np.zeros((19, 10, 10))
-        self.position_repr = np.zeros((19, 10, 10))
+        self.position_repr = np.zeros((19, 10, 10), dtype=np.float) #, dtype=np.csingle) -> torch implementation tbd
         self._update_position_mask()
         self._update_piece_vector()
 
@@ -30,6 +30,17 @@ class Session:
         for p in self.pieces:
             print(p)
             print(pieces[p])
+
+    def state_str(self):
+        state_str = ''
+        state_str += 'score: %i\n'%self.score
+        state_str += np.array2string(self.board)
+        state_str += '\n'
+        for p in self.pieces:
+            state_str += np.array2string(pieces[p])
+            state_str += '\n'
+
+        return state_str
 
     def get_state(self):
         return State(torch.tensor(self.piece_mask).unsqueeze(0),
@@ -50,7 +61,7 @@ class Session:
 
         # check if piece fits into the desired position
         if self.position_mask[piece_id, target_position.i, target_position.j] == 0:
-            print(piece, target_position, self.board)
+            print('invalid position')
             return -1
 
         # update the board
@@ -95,8 +106,9 @@ class Session:
         # positions. Make use of the fft convolution trick.
         for piece_id, (piece, piece_trans) in enumerate(zip(pieces, transformed_pieces)):
 
-            self.position_repr[piece_id] = np.fft.ifft2(board_trans * np.conj(piece_trans))
-            self.position_mask[piece_id] = (np.real(self.position_repr[piece_id]) >= piece.sum()).astype(int)
+            self.position_repr[piece_id] = np.real(np.fft.ifft2(board_trans * np.conj(piece_trans)))
+            self.position_mask[piece_id] = (self.position_repr[piece_id] >= piece.sum()).astype(int)
+
 
         self.position_mask = np.multiply(self.position_mask, base_position_mask)
 

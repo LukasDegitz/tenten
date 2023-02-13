@@ -1,23 +1,28 @@
 from itertools import count
+
+import numpy as np
+
 from agent import Agent
 from game import Session
-import math
+from utils import pieces
+import time
 
-TARGET_UPDATE = 5
-optim_every = 10
+TARGET_UPDATE = 1
+optim_every = 5
+log_every = 10
 device = 'cuda'
-max_eps = 100000
+max_eps = 1000
 
 max_score = {'e': -1, 's': 0}
 
 total_score = 0
-n_pops = 0
+total_pops = 0
 # one agent for now
 # basic settings -> try different ones
 print('initializing agent')
 agent = Agent(device=device)
 #agent.init_memory('saves')
-#create a baseline :) -> random moves for idk 1k games or so
+start = time.time()
 while agent.games_played < max_eps:
 
     # initialize game session
@@ -27,12 +32,12 @@ while agent.games_played < max_eps:
 
         current_state = session.get_state()
         #mask = session.get_mask()
-        action = agent.select_action(current_state)
+        action, _ = agent.select_action(current_state)
 
-        step_reward = session.take_action(action)
+        step_score = session.take_action(action)
         if session.lost:
             losing_state = session.get_state()
-            agent.put_reward(step_reward, losing_state)
+            agent.put_reward(step_score, losing_state)
 
             total_score += session.score
             if session.score > max_score['s']:
@@ -42,17 +47,89 @@ while agent.games_played < max_eps:
             agent.games_played += 1
             break
 
-        if step_reward > 10:
-            n_pops+=1
-        agent.put_reward(step_reward)
+        if step_score > 10:
+            total_pops+=1
+        agent.put_reward(step_score)
         if (agent.actions_taken % optim_every == 0):
             agent.optimize_model()
 
 
     if agent.games_played % TARGET_UPDATE == 1:
-
         agent.update_target()
-        print('%i: AS  %.2f|AA %.2f|POP %i'
+
+    if agent.games_played % 10 == 1:
+        print('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'
               % (agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
-                 n_pops))
-        n_pops = 0
+                 total_pops/agent.games_played, time.time()-start))
+
+infer_res = {}
+print('#' * 50)
+f_name = 'res/inferlog_'+time.strftime('%y%m%d_%H%M%S')+'.txt'
+with open(f_name, 'w') as w_file:
+    print('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'%(agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
+                 total_pops/agent.games_played, time.time()-start))
+    print('writing to: '+f_name)
+    print('infer start:')
+    w_file.write('Training Result:'+'\n')
+    train_res = 'EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f| MAX_SCORE: %i @ %i eps'%(agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
+                 total_pops/agent.games_played, time.time()-start, max_score['s'], max_score['e'])+'\n'
+    w_file.write(train_res)
+    w_file.write('infer start:\n')
+
+
+    for i in range(10):
+        print('#' * 50)
+        print('EPS %i' % i)
+        w_file.write(('#' * 50) + '\n')
+        w_file.write(('EPS %i' % i) + '\n')
+        session = Session()
+        pops = 0
+        start = time.time()
+        # play until the session is lost (i.e. no more possible moves)
+        for t in count():
+            print('-'*30)
+            print('step %i'%t)
+            w_file.write(('-'*30) + '\n')
+            w_file.write(('step %i'%t) + '\n')
+
+            state_str = session.state_str()
+            print(state_str)
+            w_file.write((state_str) + '\n')
+
+            current_state = session.get_state()
+            # mask = session.get_mask()
+            action, q_pred = agent.select_action(current_state)
+            print('ACT_PIECE (q_pred %.2f):' % q_pred[0])
+            print(np.array2string(pieces[action.p_id]))
+            print('ACT_POS (q_pred %.2f): %i, %i'%(q_pred[1], action.pos.i, action.pos.j))
+            w_file.write(('ACT_PIECE (q_pred %.2f):' % q_pred[0])+'\n')
+            w_file.write((np.array2string(pieces[action.p_id]))+'\n')
+            w_file.write(('ACT_POS (q_pred %.2f): %i, %i'%(q_pred[1], action.pos.i, action.pos.j))+'\n')
+            reward = session.take_action(action)
+            if session.lost:
+                print('GAME OVER!')
+                infer_res[i] = {'score': session.score,
+                                'actions': t,
+                                'pops': pops,
+                                't': round(time.time()-start,2)
+                                }
+                state_str = session.state_str()
+                print(state_str)
+                w_file.write((state_str) + '\n')
+                agent.games_played += 1
+                break
+
+            if reward > 10:
+                pops+=1
+
+with open(f_name.replace('inferlog', 'inferres'), 'w') as w_file:
+    print('Infer Results:')
+    print('RUN|SCORE|ACTIONS|POPS|T')
+
+    w_file.write('Train Result:\n')
+    w_file.write(train_res)
+    w_file.write('Infer Results:\n')
+    w_file.write('RUN|SCORE|ACTIONS|POPS|T\n')
+    for i, res in infer_res.items():
+        print('%i|%i|%i|%i|%.2f'%(i, res['score'], res['actions'], res['pops'], res['t']))
+        w_file.write(('%i|%i|%i|%i|%.2f'%(i, res['score'], res['actions'], res['pops'], res['t']))+'\n')

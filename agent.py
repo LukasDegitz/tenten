@@ -1,7 +1,7 @@
 import numpy as np
 
 from dql import D3QN, ReplayMemory, Transition
-from utils import State, Action, Position, make_state
+from utils import State, Action, Position, make_state, sigmoid_mask
 import torch
 import random
 import math
@@ -24,6 +24,7 @@ class Agent(object):
 
     # training params
     ALPHA = None
+    BETA = None
     BATCH_SIZE = None
     GAMMA = None
     EPS_START = None
@@ -31,12 +32,13 @@ class Agent(object):
     EPS_DECAY = None
 
     def __init__(self, device='cuda', batch_size=64, gamma=0.99, eps_start=0.9,
-                 eps_end=0.05, eps_decay=1000, lr=1e-4, alpha=0.5):
+                 eps_end=0.05, eps_decay=1000, lr=1e-4, alpha=0.5, beta=0.5):
 
+        self.BETA = beta  # measures state vs. action importance
         self.device = device
         # double deep q learning - decouple action value estimation from q value estimation
-        self.policy_net = D3QN(device).to(device)
-        self.target_net = D3QN(device).to(device)
+        self.policy_net = D3QN(device, beta=self.BETA).to(device)
+        self.target_net = D3QN(device, beta=self.BETA).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
@@ -54,12 +56,15 @@ class Agent(object):
         self.EPS_START = eps_start
         self.EPS_END = eps_end
         self.EPS_DECAY = eps_decay
-        self.ALPHA = alpha
+        self.ALPHA = alpha # measures piece vs. position importance
 
-    def select_action(self, state: State):
+
+    def select_action(self, state: State, mode='train'):
         sample = random.random()
-
-        eps_threshold = self.EPS_END + (self.EPS_START - self.EPS_END) * \
+        if mode == 'infer':
+            eps_threshold = 0.000
+        else:
+            eps_threshold = self.EPS_END + (self.EPS_START - self.EPS_END) * \
                         math.exp(-1. * self.actions_taken / self.EPS_DECAY)
 
         self.actions_taken += 1
@@ -94,7 +99,7 @@ class Agent(object):
         self.mem_cache['action'] = (p_id.unsqueeze(0), pos_id.unsqueeze(0))
 
         i, j = divmod(pos_id.item(), 10)
-        return Action(p_id.item(), Position(i, j))
+        return Action(p_id.item(), Position(i, j)), (q_piece.max(1)[0].item(), q_pos.max(1)[0].item())
 
     def optimize_model(self):
 
@@ -152,7 +157,9 @@ class Agent(object):
         #    param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
+    def reward(self, session_score):
 
+        return torch.sigmoid(session_score/10)
 
     def update_target(self):
         # soft update
@@ -162,9 +169,11 @@ class Agent(object):
             target_net_state_dict[key] = policy_net_state_dict[key] * 0.005 + target_net_state_dict[key] * (1 - 0.005)
         self.target_net.load_state_dict(target_net_state_dict)
 
-    def put_reward(self, reward, losing_state: State = None):
+    def put_reward(self, step_score, losing_state: State = None):
 
-        self.mem_cache['reward'] = torch.tensor([reward], dtype=torch.float).to(self.device)
+        score_tensor = torch.tensor([step_score], dtype=torch.float).to(self.device)
+        reward = self.reward(score_tensor)
+        self.mem_cache['reward'] = reward
 
         if losing_state:
             losing_state = State(losing_state.pieces.to(self.device), losing_state.board.to(self.device),
