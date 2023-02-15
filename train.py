@@ -1,17 +1,17 @@
 from itertools import count
 
 import numpy as np
-
+import torch
 from agent import Agent
 from game import Session
 from utils import pieces
 import time
 
-TARGET_UPDATE = 1
-optim_every = 5
+TARGET_UPDATE = 10
+optim_every = 20
 log_every = 10
 device = 'cuda'
-max_eps = 1000
+max_eps = 100000
 
 max_score = {'e': -1, 's': 0}
 
@@ -23,6 +23,8 @@ print('initializing agent')
 agent = Agent(device=device)
 #agent.init_memory('saves')
 start = time.time()
+cp_path = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_cp.pt'
+save_every = 10000
 while agent.games_played < max_eps:
 
     # initialize game session
@@ -32,8 +34,7 @@ while agent.games_played < max_eps:
 
         current_state = session.get_state()
         #mask = session.get_mask()
-        action, _ = agent.select_action(current_state)
-
+        action = agent.select_action(current_state)
         step_score = session.take_action(action)
         if session.lost:
             losing_state = session.get_state()
@@ -57,14 +58,18 @@ while agent.games_played < max_eps:
     if agent.games_played % TARGET_UPDATE == 1:
         agent.update_target()
 
-    if agent.games_played % 10 == 1:
+    if agent.games_played % 20 == 1:
         print('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'
               % (agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
                  total_pops/agent.games_played, time.time()-start))
 
+    if agent.games_played % save_every == 0:
+        torch.save(agent.policy_net.state_dict(), cp_path)
+
+agent.policy_net.eval()
 infer_res = {}
 print('#' * 50)
-f_name = 'res/inferlog_'+time.strftime('%y%m%d_%H%M%S')+'.txt'
+f_name = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_inferlog.txt'
 with open(f_name, 'w') as w_file:
     print('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'%(agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
                  total_pops/agent.games_played, time.time()-start))
@@ -98,13 +103,13 @@ with open(f_name, 'w') as w_file:
 
             current_state = session.get_state()
             # mask = session.get_mask()
-            action, q_pred = agent.select_action(current_state)
-            print('ACT_PIECE (q_pred %.2f):' % q_pred[0])
+            action = agent.select_action(current_state)
+            print('ACT_PIECE :' )
             print(np.array2string(pieces[action.p_id]))
-            print('ACT_POS (q_pred %.2f): %i, %i'%(q_pred[1], action.pos.i, action.pos.j))
-            w_file.write(('ACT_PIECE (q_pred %.2f):' % q_pred[0])+'\n')
+            print('ACT_POS : %i, %i'%( action.pos.i, action.pos.j))
+            w_file.write(('ACT_PIECE :') +'\n')
             w_file.write((np.array2string(pieces[action.p_id]))+'\n')
-            w_file.write(('ACT_POS (q_pred %.2f): %i, %i'%(q_pred[1], action.pos.i, action.pos.j))+'\n')
+            w_file.write(('ACT_POS (: %i, %i'%( action.pos.i, action.pos.j))+'\n')
             reward = session.take_action(action)
             if session.lost:
                 print('GAME OVER!')

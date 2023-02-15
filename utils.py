@@ -30,7 +30,7 @@ transformed_pieces = [np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
-State = namedtuple("State", ["pieces", "board", "board_mask"])
+State = namedtuple("State", ["board", "mask"])
 
 def get_pieces():
     return rd.choices(range(len(pieces)), k=3)

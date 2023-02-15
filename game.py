@@ -43,9 +43,8 @@ class Session:
         return state_str
 
     def get_state(self):
-        return State(torch.tensor(self.piece_mask).unsqueeze(0),
-                     torch.tensor(self.position_repr, dtype=torch.float).unsqueeze(0),
-                     torch.tensor(self.position_mask).reshape((19, 100)).unsqueeze(0))
+        return State(torch.tensor(self.position_repr, dtype=torch.float).unsqueeze(0),
+                     torch.tensor(self.position_mask * self.piece_vector.reshape((19, 1, 1)), dtype=torch.float).unsqueeze(0))
 
     def take_action(self, action: Action):
 

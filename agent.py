@@ -31,14 +31,14 @@ class Agent(object):
     EPS_END = None
     EPS_DECAY = None
 
-    def __init__(self, device='cuda', batch_size=64, gamma=0.99, eps_start=0.9,
-                 eps_end=0.05, eps_decay=1000, lr=1e-4, alpha=0.5, beta=0.5):
+    def __init__(self, device='cuda', batch_size=128, gamma=0.99, eps_start=0.9,
+                 eps_end=0.05, eps_decay=3000, lr=5e-4, alpha=0, beta=0.5):
 
         self.BETA = beta  # measures state vs. action importance
         self.device = device
         # double deep q learning - decouple action value estimation from q value estimation
-        self.policy_net = D3QN(device, beta=self.BETA).to(device)
-        self.target_net = D3QN(device, beta=self.BETA).to(device)
+        self.policy_net = D3QN(device).to(device)
+        self.target_net = D3QN(device).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
@@ -68,7 +68,7 @@ class Agent(object):
                         math.exp(-1. * self.actions_taken / self.EPS_DECAY)
 
         self.actions_taken += 1
-        state = State(state.pieces.to(self.device), state.board.to(self.device), state.board_mask.to(self.device))
+        state = State(state.board.to(self.device), state.mask.to(self.device))
 
         #not a starting state
         if 'reward' in self.mem_cache:
@@ -81,25 +81,21 @@ class Agent(object):
 
             with torch.no_grad():
                 #print('pred')
-                q_piece, q_pos = self.policy_net(state.pieces, state.board, state.board_mask)
+                q_hat = self.policy_net(state.board, state.mask)
 
 
         else:
             #print('rand')
-            q_piece = torch.sigmoid(torch.randn((1, 19))).to(self.device)
-            #q_rand = torch.sigmoid(torch.randn((19, 100))).to(self.device)
-            q_piece = q_piece * state.pieces * (state.board_mask.sum(2) >= 1)
-            p_id = q_piece.argmax(1)
-            q_pos = torch.sigmoid(torch.randn((1, 100))).to(self.device)
-            q_pos *= state.board_mask[0, p_id, :]
+            q_rand = torch.square(torch.rand((1, 19, 10, 10))).to(self.device)
+            q_hat = q_rand*state.mask
 
+        q_hat = q_hat.reshape((1, 1900))
+        q_max, act = q_hat.max(1)
+        self.mem_cache['action'] = act.unsqueeze(0)
 
-        p_id = q_piece.argmax(1)
-        pos_id = q_pos.argmax(1)
-        self.mem_cache['action'] = (p_id.unsqueeze(0), pos_id.unsqueeze(0))
-
-        i, j = divmod(pos_id.item(), 10)
-        return Action(p_id.item(), Position(i, j)), (q_piece.max(1)[0].item(), q_pos.max(1)[0].item())
+        p_id, pos = divmod(act.item(), 100)
+        i, j = divmod(pos, 10)
+        return Action(p_id, Position(i, j))
 
     def optimize_model(self):
 
@@ -112,42 +108,34 @@ class Agent(object):
         # to Transition of batch-arrays.
         batch = Transition(*zip(*transitions))
 
-        board_state_batch = torch.cat([state.board for state in batch.state], 0)
-        board_mask_batch = torch.cat([state.board_mask for state in batch.state], 0)
-        piece_state_batch = torch.cat([state.pieces for state in batch.state], 0)
-        piece_action_batch = torch.cat([action[0] for action in batch.action], 0)
-        board_action_batch = torch.cat([action[1] for action in batch.action], 0)
+        state_board_batch = torch.cat([state.board for state in batch.state], 0)
+        state_mask_batch = torch.cat([state.mask for state in batch.state], 0)
+        action_batch = torch.cat(batch.action, 0)
         reward_batch = torch.cat(batch.reward, 0)
-        next_board_state_batch = torch.cat([state.board for state in batch.next_state], 0)
-        next_board_mask_batch = torch.cat([state.board_mask for state in batch.next_state], 0)
-        next_piece_state_batch = torch.cat([state.pieces for state in batch.next_state], 0)
+        next_state_board_batch = torch.cat([state.board for state in batch.next_state], 0)
+        next_state_mask_batch = torch.cat([state.mask for state in batch.next_state], 0)
 
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
-        piece_action_values, board_action_values = \
-            self.policy_net(piece_state_batch, board_state_batch, board_mask_batch)
-        selected_piece_action_values = piece_action_values.gather(1, piece_action_batch)
-        selected_board_action_values = board_action_values.gather(1, board_action_batch)
-        state_action_values = (selected_piece_action_values * self.ALPHA + selected_board_action_values * (1 - self.ALPHA))
+        state_action_values = self.policy_net(state_board_batch, state_mask_batch)
+        state_action_values = state_action_values.reshape((state_action_values.size()[0], 1900))
+        state_action_values = state_action_values.gather(1, action_batch).squeeze(1)
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
         # on the "older" target_net; selecting their best reward with max(1)[0].
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
-        next_piece_state_value, next_board_state_value = \
-            self.target_net(next_piece_state_batch, next_board_state_batch, next_board_mask_batch)
 
-        next_piece_state_value, next_board_state_value = \
-            next_piece_state_value.max(1)[0].detach(), next_board_state_value.max(1)[0].detach()
+        next_state_value = self.target_net(next_state_board_batch, next_state_mask_batch)
+        next_state_value = next_state_value.reshape((next_state_value.size()[0], 1900)).max(1)[0].detach()
 
         # Compute the expected Q values
-        expected_state_action_values = \
-            ((next_piece_state_value * self.ALPHA + next_piece_state_value * (1 - self.ALPHA)) * self.GAMMA) + reward_batch
 
+        expected_state_action_values = (next_state_value * self.GAMMA) + reward_batch
         # Compute Huber loss
-        loss = self.loss(state_action_values, expected_state_action_values.unsqueeze(1))
+        loss = self.loss(state_action_values, expected_state_action_values)
 
         # Optimize the model
         self.optimizer.zero_grad()
@@ -159,14 +147,15 @@ class Agent(object):
 
     def reward(self, session_score):
 
-        return torch.sigmoid(session_score/10)
+        #print(torch.softmax(session_score, dim=0))
+        return session_score
 
     def update_target(self):
         # soft update
         target_net_state_dict = self.target_net.state_dict()
         policy_net_state_dict = self.policy_net.state_dict()
         for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key] * 0.005 + target_net_state_dict[key] * (1 - 0.005)
+            target_net_state_dict[key] = policy_net_state_dict[key] * 0.009 + target_net_state_dict[key] * (1 - 0.005)
         self.target_net.load_state_dict(target_net_state_dict)
 
     def put_reward(self, step_score, losing_state: State = None):
@@ -176,8 +165,7 @@ class Agent(object):
         self.mem_cache['reward'] = reward
 
         if losing_state:
-            losing_state = State(losing_state.pieces.to(self.device), losing_state.board.to(self.device),
-                                 losing_state.board_mask.to(self.device))
+            losing_state = State(losing_state.board.to(self.device), losing_state.mask.to(self.device))
             self.mem_cache['next_state'] = losing_state
             self._push_cache()
 
@@ -231,4 +219,21 @@ class Agent(object):
         self.memory.push(self.mem_cache['state'], self.mem_cache['action'], self.mem_cache['next_state']
                          , self.mem_cache['reward'])
         self.mem_cache = {}
+
+    def save_model(self, path):
+        torch.save({
+            'epoch': self.games_played,
+            'policy_net_state_dict': self.policy_net.state_dict(),
+            'target_net_state_dict': self.target_net.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'loss_state_dict': self.loss.state_dict(),
+        }, path)
+
+    def load_model(self, path):
+        checkpoint = torch.load(path)
+        self.games_played = checkpoint['policy_net_state_dict']
+        self.policy_net.load_state_dict(checkpoint['policy_net_state_dict'])
+        self.target_net.load_state_dict(checkpoint['target_net_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.loss.load_state_dict(checkpoint['loss_state_dict'])
 
