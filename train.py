@@ -39,7 +39,7 @@ while agent.games_played < max_eps:
         step_score = session.take_action(action)
         next_state = session.get_state()
 
-        agent.put_reward(step_score, next_state, session.lost)
+        agent.put_reward(step_score, state=current_state, action=action, next_state=next_state)
         if session.lost:
 
             total_score += session.score

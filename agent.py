@@ -177,9 +177,12 @@ class Agent(object):
 
         #print('optimizer time: %.2f s'%(time.time()-start))
 
-    def reward(self, session_score, board):
+    def reward(self, session_score, action: Action, board):
 
-        #0 < penalty < beta
+        #normalize session score to 1
+        #to prevent overestimation of big pieces
+        session_score -= (pieces[action.p_id].sum() + 1)
+        # 0 < penalty < beta -> penalize full boards
         penalty = self.BETA * (board.sum()/100)
         return session_score * (1 - penalty)
 
@@ -192,24 +195,12 @@ class Agent(object):
                 target_net_state_dict[key] = policy_net_state_dict[key] * self.TAU + target_net_state_dict[key] * (1 - self.TAU)
             target_net.load_state_dict(target_net_state_dict)
 
-    def put_reward(self, step_score, next_state: State, losing_state: bool = False):
+    def put_reward(self, step_score, state: State, action: Action, next_state: State):
 
-        reward = self.reward(step_score, next_state.board)
+        reward = self.reward(step_score, action, next_state.board)
         reward = torch.tensor([reward], dtype=torch.float).to(self.device)
 
-        self.mem_cache['reward'] = reward
-        self.mem_cache['next_state'] = next_state
-        self._push_cache()
-
-    def _push_cache(self):
-        if len(self.mem_cache) != 4:
-            print('Memory error, clearing cache. Memory of step is lost!')
-            self.mem_cache = {}
-            return
-
-        self.memory[self.mem_cache['action'].p_id].push(self.mem_cache['state'], self.mem_cache['action'],
-                                                        self.mem_cache['next_state'], self.mem_cache['reward'])
-        self.mem_cache = {}
+        self.memory[action.p_id].push(state, action, next_state, reward)
 
 #TBD
     def init_memory(self, target_path):
