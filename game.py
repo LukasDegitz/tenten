@@ -1,5 +1,5 @@
 import numpy as np
-from utils import get_pieces, Action, Position, State, little_gauss, base_position_mask, pieces, transformed_pieces
+from utils import get_pieces, Action, State, little_gauss, position_mask, pieces, transformed_pieces
 import torch
 
 class Session:
@@ -9,8 +9,7 @@ class Session:
     score = None
     lost = None
 
-    position_mask = None
-    position_repr = None
+    mask = None
     piece_vector = None
     piece_mask = None
 
@@ -19,9 +18,8 @@ class Session:
         self.pieces = get_pieces()
         self.score = 0
         self.lost = False
-        self.position_mask = np.zeros((19, 10, 10))
-        self.position_repr = np.zeros((19, 10, 10), dtype=np.float) #, dtype=np.csingle) -> torch implementation tbd
-        self._update_position_mask()
+        self.mask = np.zeros((19, 10, 10))
+        self._update_mask()
         self._update_piece_vector()
 
     def print_state(self):
@@ -43,8 +41,7 @@ class Session:
         return state_str
 
     def get_state(self):
-        return State(torch.tensor(self.position_repr, dtype=torch.float).unsqueeze(0),
-                     torch.tensor(self.position_mask * self.piece_vector.reshape((19, 1, 1)), dtype=torch.float).unsqueeze(0))
+        return State(self.board.copy(), self.pieces.copy())
 
     def take_action(self, action: Action):
 
@@ -59,8 +56,11 @@ class Session:
         piece_shape = np.shape(piece)
 
         # check if piece fits into the desired position
-        if self.position_mask[piece_id, target_position.i, target_position.j] == 0:
+        if self.mask[piece_id, target_position.i, target_position.j] == 0:
             print('invalid position')
+            print(self.mask[piece_id])
+            print(action)
+            self.print_state()
             return -1
 
         # update the board
@@ -75,9 +75,9 @@ class Session:
         self._remove_piece(action.p_id)
 
         #update state
-        self._update_position_mask()
+        self._update_mask()
 
-        if np.multiply(self.piece_vector.reshape((19, 1, 1)), self.position_mask).sum() == 0:
+        if np.multiply(self.piece_vector.reshape((19, 1, 1)), self.mask).sum() == 0:
             #game over - no more possible moves
             self.lost = True
             return -1000
@@ -95,21 +95,9 @@ class Session:
         #score
         return little_gauss(len(b_is)+len(b_js)) * 10
 
-    def _update_position_mask(self):
+    def _update_mask(self):
 
-        #invert and transform board
-        board_inv = np.logical_not(self.board).astype(int)
-        board_trans = np.fft.fft2(board_inv)
-
-        # convolute all possible pieces with the inverted board to get the mask of all possible
-        # positions. Make use of the fft convolution trick.
-        for piece_id, (piece, piece_trans) in enumerate(zip(pieces, transformed_pieces)):
-
-            self.position_repr[piece_id] = np.real(np.fft.ifft2(board_trans * np.conj(piece_trans)))
-            self.position_mask[piece_id] = (self.position_repr[piece_id] >= piece.sum()).astype(int)
-
-
-        self.position_mask = np.multiply(self.position_mask, base_position_mask)
+        self.mask = position_mask(self.get_state())
 
     def _remove_piece(self, pid):
 

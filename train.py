@@ -7,8 +7,8 @@ from game import Session
 from utils import pieces
 import time
 
-TARGET_UPDATE = 10
-optim_every = 20
+TARGET_UPDATE = 20
+optim_every = 2
 log_every = 10
 device = 'cuda'
 max_eps = 100000
@@ -24,21 +24,23 @@ agent = Agent(device=device)
 #agent.init_memory('saves')
 start = time.time()
 cp_path = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_cp.pt'
-save_every = 10000
+save_every = 5000
 while agent.games_played < max_eps:
 
     # initialize game session
     session = Session()
+    next_state = session.get_state()
     #play until the session is lost (i.e. no more possible moves)
     for t in count():
 
-        current_state = session.get_state()
+        current_state = next_state
         #mask = session.get_mask()
         action = agent.select_action(current_state)
         step_score = session.take_action(action)
+        next_state = session.get_state()
+
+        agent.put_reward(step_score, next_state, session.lost)
         if session.lost:
-            losing_state = session.get_state()
-            agent.put_reward(step_score, losing_state)
 
             total_score += session.score
             if session.score > max_score['s']:
@@ -50,9 +52,9 @@ while agent.games_played < max_eps:
 
         if step_score > 10:
             total_pops+=1
-        agent.put_reward(step_score)
-        if (agent.actions_taken % optim_every == 0):
-            agent.optimize_model()
+
+    if (agent.games_played % optim_every == 1):
+        agent.optimize_model()
 
 
     if agent.games_played % TARGET_UPDATE == 1:
@@ -66,7 +68,8 @@ while agent.games_played < max_eps:
     if agent.games_played % save_every == 0:
         torch.save(agent.policy_net.state_dict(), cp_path)
 
-agent.policy_net.eval()
+for policy_net in agent.policy_nets:
+    policy_net.eval()
 infer_res = {}
 print('#' * 50)
 f_name = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_inferlog.txt'
@@ -103,7 +106,7 @@ with open(f_name, 'w') as w_file:
 
             current_state = session.get_state()
             # mask = session.get_mask()
-            action = agent.select_action(current_state)
+            action = agent.select_action(current_state, mode='infer')
             print('ACT_PIECE :' )
             print(np.array2string(pieces[action.p_id]))
             print('ACT_POS : %i, %i'%( action.pos.i, action.pos.j))
