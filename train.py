@@ -4,11 +4,11 @@ import numpy as np
 import torch
 from agent import Agent
 from game import Session
-from utils import pieces
+from utils import pieces, transform_action
 import time
 
-TARGET_UPDATE = 20
-optim_every = 2
+TARGET_UPDATE = 100
+optim_every = 5
 log_every = 10
 device = 'cuda'
 max_eps = 100000
@@ -29,17 +29,18 @@ while agent.games_played < max_eps:
 
     # initialize game session
     session = Session()
-    next_state = session.get_state()
+    next_state_transformed = session.get_transformed_state()
     #play until the session is lost (i.e. no more possible moves)
     for t in count():
 
-        current_state = next_state
+        current_state_transformed = next_state_transformed
         #mask = session.get_mask()
-        action = agent.select_action(current_state)
+        q_hat = agent.select_action(current_state_transformed)
+        action = transform_action(current_state_transformed, q_hat)
         step_score = session.take_action(action)
-        next_state = session.get_state()
+        next_state_transformed = session.get_transformed_state()
 
-        agent.put_reward(step_score, state=current_state, action=action, next_state=next_state)
+        agent.put_reward(step_score, state=current_state_transformed, action=q_hat, next_state=next_state_transformed)
         if session.lost:
 
             total_score += session.score

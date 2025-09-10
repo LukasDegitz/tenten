@@ -1,5 +1,5 @@
 import numpy as np
-from utils import get_pieces, Action, State, little_gauss, position_mask, pieces, transformed_pieces
+from utils import get_pieces, Action, State, little_gauss, position_mask, pieces, transform_state
 import torch
 
 class Session:
@@ -42,6 +42,9 @@ class Session:
 
     def get_state(self):
         return State(self.board.copy(), self.pieces.copy())
+
+    def get_transformed_state(self):
+        return transform_state(self.get_state())
 
     def take_action(self, action: Action):
 
@@ -97,7 +100,7 @@ class Session:
 
     def _update_mask(self):
 
-        self.mask = position_mask(self.get_state())
+        self.mask = position_mask(self.board.copy())
 
     def _remove_piece(self, pid):
 
