@@ -62,7 +62,7 @@ class Agent(object):
 
 
 
-    def select_action(self, transformed_state, mode='train'):
+    def select_action(self, current_state, mode='train'):
 
         sample = random.random()
         if mode == 'infer':
@@ -73,21 +73,20 @@ class Agent(object):
 
         self.actions_taken += 1
 
-        current_state, possible_states, possible_actions = transformed_state
         if sample > eps_threshold:
 
             with torch.no_grad():
                 #print('pred')
 
-                q_hat = self.policy_net(current_state, possible_states)
+                q_hat = self.policy_net(current_state)
                 #q_hat = torch.argmax(q_hat, dim=1)[0]
                 #action =
 
         else:
             #print('rand')
-            q_hat = torch.randn(possible_states.size()[1]).unsqueeze(0)
-        q_hat = torch.argmax(q_hat, 1)
-        q_hat = q_hat[0].item()
+            q_hat = torch.randn(current_state.size()[0])
+        q_hat = torch.argmax(q_hat, 0)
+        q_hat = q_hat.item()
         #print(q_hat)
         return q_hat
 
@@ -105,67 +104,56 @@ class Agent(object):
         # to Transition of batch-arrays.
         batch = Transition(*zip(*transitions))
 
-        #print(type(batch.state), type(batch.action), type(batch.next_state))
+        # print(type(batch.state), type(batch.action), type(batch.next_state))
         rewards = torch.cat(batch.reward).to(self.device)
-        state_action_values, next_state_values = torch.zeros(self.BATCH_SIZE, device=self.device),torch.zeros(self.BATCH_SIZE, device=self.device)
-        for i, (state, action, next_state) in enumerate(zip(batch.state, batch.action, batch.next_state)):
-            state_current_board = state[0].to(self.device)
-            state_action_board= state[0].to(self.device)
-            action = torch.tensor(action).to(self.device).unsqueeze(0).unsqueeze(0)
-            #action_batch = action_batch.unsqueeze(-1)
+        state = torch.cat(batch.state).to(self.device)
+        action = torch.cat(batch.action).to(self.device)
+        next_state = torch.cat(batch.next_state).to(self.device)
 
-            next_state_current_board= next_state[0].to(self.device)
-            next_state_action_board = next_state[1].to(self.device)
+        #get lengths of each batch items to align predictions and rewards later
+        state_lens = torch.tensor(tuple(state.size()[0] for state in batch.state)).to(self.device)
+        next_state_lens = tuple(next_state.size()[0] for next_state in batch.next_state)
 
-            #print(action.size(),reward.size(), next_state_action_board.size())
-            # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
-            # columns of actions taken. These are the actions which would've been taken
-            # for each batch state according to policy_net
-            state_action_value = self.policy_net(state_current_board,state_action_board).squeeze(0)
-            #state_action_values = state_action_values.reshape((state_action_values.size()[0], 100))
+        #compute offset to gather actions
+        action_offset = torch.roll(state_lens, 1)
+        action_offset[0] = 0
+        action_offset = torch.cumsum(action_offset, 0)
 
-            state_action_values[i] = state_action_value.gather(0, action)[0]
-            # Compute V(s_{t+1}) for all next states.
-            # Expected values of actions for non_final_next_states are computed based
-            # on the "older" target_net; selecting their best reward with max(1)[0].
-            # This is merged based on the mask, such that we'll have either the expected
-            # state value or 0 in case the state was final.
+        state_action_values = self.policy_net(state)
+        #print(state_action_values.size(), action_offset.size(), action.size())
+        state_action_values = state_action_values.gather(0, (action_offset+action).unsqueeze(1)).squeeze(1)
 
-            with torch.no_grad():
-                #next state value for a random piece (not allways the same)
-                if next_state_action_board.size()[1]==0: #losing state
-                    continue
-                else:
-                    next_state_value = self.target_net(next_state_current_board, next_state_action_board)
-                    next_state_values[i] = next_state_value.max(1)[0].detach()
-
+        with torch.no_grad():
+            next_state_pred = self.target_net(next_state)
+            next_state_values = torch.zeros(self.BATCH_SIZE).to(self.device)
+            non_zero_ids = torch.tensor(tuple(i for i, next_len in enumerate(next_state_lens) if next_len))
+            next_state_values[non_zero_ids] = torch.cat(tuple(r.max(0)[0] for r in torch.split(next_state_pred, next_state_lens) if r.size()[0]))
         # Compute the expected Q values
-
         expected_state_action_values = (next_state_values * self.GAMMA) + rewards
+
         # Compute Huber loss
-
-
         loss = self.loss(state_action_values, expected_state_action_values)
         #print(state_action_value.size(), expected_state_action_value.size())
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
 
-        #torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
-        for param in self.policy_net.parameters():
-            param.grad.data.clamp_(-1, 1)
+        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
+        #for param in self.policy_net.parameters():
+        #    param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
-        #print('optimizer time: %.2f s'%(time.time()-start))
+    def reward(self, session_score, board, action):
 
-    def reward(self, session_score):
-
+        if session_score < 0:
+            return -1
         #normalize session score to 1
         #to prevent overestimation of big pieces
-        #session_score -= (pieces[action.p_id].sum() + 1)
+        session_score -= (pieces[action.p_id].sum() - 1)
         # 0 < penalty < beta -> penalize full boards
-        #penalty = self.BETA * (board.sum()/100)
-        return session_score # * (1 - penalty)
+        penalty = self.BETA * (board.sum()/100)
+        #print(session_score, penalty, session_score * (1 - penalty))
+        return session_score * (1 - penalty)
 
     def update_target(self):
         # soft update
@@ -176,12 +164,10 @@ class Agent(object):
             target_net_state_dict[key] = policy_net_state_dict[key] * self.TAU + target_net_state_dict[key] * (1 - self.TAU)
         self.target_net.load_state_dict(target_net_state_dict)
 
-    def put_reward(self, step_score, state, action, next_state):
+    def push_batch(self, reward, state, action, next_state):
 
-        reward = self.reward(step_score)
         reward = torch.tensor([reward], dtype=torch.float).to(self.device)
-
-        self.memory.push(state, action, next_state, reward)
+        self.memory.push(state, torch.tensor(action).unsqueeze(0), next_state, reward)
 
 #TBD
     def init_memory(self, target_path):

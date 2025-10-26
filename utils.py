@@ -90,7 +90,8 @@ def transform_state(state: State):
     possible_piece_positions = np.where(mask[state.pieces] == 1)
 
     piece_position_boards = np.repeat([state.board], n_possible_positions.sum(), axis=0)
-    possible_states = np.zeros(piece_position_boards.shape)
+    possible_states = np.zeros((n_possible_positions.sum(), 20, 10))
+    current_state = mask.sum(axis=0)/len(pieces)
 
     for p_enum, (piece_id, position_i, position_j, board) in enumerate(zip(piece_ids, possible_piece_positions[1], possible_piece_positions[2], piece_position_boards)):
         board[position_i:position_i+pieces[piece_id].shape[0],
@@ -100,17 +101,14 @@ def transform_state(state: State):
         board[:, b_js] = 0
 
         # mask board and compute average (todo: replace with weighted sum e.g. by available piece > any piece)
-        possible_states[p_enum] = position_mask(board).sum(axis=0)/len(pieces)
+        possible_states[p_enum] = np.concatenate((current_state, position_mask(board).sum(axis=0)/len(pieces)))
 
-    current_state, possible_actions = mask.sum(axis=0)/len(pieces), (piece_ids, possible_piece_positions[1], possible_piece_positions[2])
-    current_state = np.repeat([current_state], len(possible_states), axis=0)
-    current_state = torch.tensor(current_state, dtype=torch.float).unsqueeze(0)
-    possible_states = torch.tensor(possible_states, dtype=torch.float).unsqueeze(0)
-    return (current_state, possible_states, possible_actions)
+    possible_actions = (piece_ids, possible_piece_positions[1], possible_piece_positions[2])
+    possible_states = torch.tensor(possible_states, dtype=torch.float)
+    return (possible_states, possible_actions)
 
-def transform_action(current_state_transformed, q_hat):
-    _, _, possible_actions = current_state_transformed
-    return Action(possible_actions[0][q_hat], Position(possible_actions[1][q_hat], possible_actions[2][q_hat]))
+def transform_action(current_possible_actions, q_hat):
+    return Action(current_possible_actions[0][q_hat], Position(current_possible_actions[1][q_hat], current_possible_actions[2][q_hat]))
 
 def random_valid_action(state: State):
     """

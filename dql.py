@@ -82,6 +82,8 @@ class mainNN(torch.nn.Module):
         self.lin = torch.nn.Sequential(
             torch.nn.Linear(200, 256),
             torch.nn.ReLU(),
+            torch.nn.Linear(256, 256),
+            torch.nn.ReLU(),
             torch.nn.Linear(256, 128),
             torch.nn.ReLU(),
             torch.nn.Linear(128, 64),
@@ -98,24 +100,18 @@ class mainNN(torch.nn.Module):
 class D3QN(torch.nn.Module):
 
     def __init__(self, device):
-        #input is tensor for positions (batchsize x 10 x 10)
+        #input is tensor for positions (batchsize x 20 x 10)
         super(D3QN, self).__init__()
 
         #self.state_net = StateCNN(device=device)
-        self.current_stateNN = stateNN(device=device)
-        self.action_stateNN = stateNN(device=device)
+        #self.current_stateNN = stateNN(device=device)
+        #self.action_stateNN = stateNN(device=device)
         self.mainNN = mainNN(device=device)
         self.device = device
 
-    def forward(self, current_state, action_state):
-        #expects current_state = (batch_size, n_possible_actions, 10, 10)
-        #and actions_state  = (batch_size, n_possible_actions, 10, 10)
-        current_state, action_state = current_state.to(self.device), action_state.to(self.device)
-        current_state = current_state.reshape((current_state.size()[0], current_state.size()[1], 100))
-        action_state = action_state.reshape((action_state.size()[0], action_state.size()[1], 100))
+    def forward(self, current_state):
+        #expects current_state = (batch_size, 20, 10)
+        current_state = current_state.to(self.device)
+        current_state = current_state.reshape((current_state.size()[0], 200))
 
-        state_value=self.current_stateNN(current_state)
-        action_value=self.action_stateNN(action_state)
-        #print(state_value.size(), action_value.size(),torch.cat((state_value, action_value), 2).size())
-        q_hat = self.mainNN(torch.cat((state_value, action_value), 2))
-        return q_hat
+        return self.mainNN(current_state)

@@ -83,7 +83,7 @@ class Session:
         if np.multiply(self.piece_vector.reshape((19, 1, 1)), self.mask).sum() == 0:
             #game over - no more possible moves
             self.lost = True
-            return -1000
+            return -1
 
         return step_score
 
