@@ -11,7 +11,7 @@ TARGET_UPDATE = 50
 optim_every = 4
 log_every = 10
 device = 'cuda'
-max_eps = 100000
+max_eps = 10000
 
 max_score = {'e': -1, 's': 0}
 
@@ -87,8 +87,8 @@ while agent.games_played < max_eps:
 
 
             for i in range(10):
-                print('#' * 50)
-                print('EPS %i' % i)
+                #print('#' * 50)
+                #print('EPS %i' % i)
                 w_file.write(('#' * 50) + '\n')
                 w_file.write(('EPS %i' % i) + '\n')
                 session = Session()
@@ -96,13 +96,13 @@ while agent.games_played < max_eps:
                 start = time.time()
                 # play until the session is lost (i.e. no more possible moves)
                 for t in count():
-                    print('-'*30)
-                    print('step %i'%t)
+                    #print('-'*30)
+                    #print('step %i'%t)
                     w_file.write(('-'*30) + '\n')
                     w_file.write(('step %i'%t) + '\n')
 
                     state_str = session.state_str()
-                    print(state_str)
+                    #print(state_str)
                     w_file.write((state_str) + '\n')
 
                     current_state_transformed, current_possible_actions  = session.get_transformed_state()
@@ -110,22 +110,22 @@ while agent.games_played < max_eps:
                     # mask = session.get_mask()
                     action = transform_action(current_possible_actions, q_hat)
 
-                    print('ACT_PIECE :' )
-                    print(np.array2string(pieces[action.p_id]))
-                    print('ACT_POS : %i, %i'%( action.pos.i, action.pos.j))
+                    #print('ACT_PIECE :' )
+                    #print(np.array2string(pieces[action.p_id]))
+                    #print('ACT_POS : %i, %i'%( action.pos.i, action.pos.j))
                     w_file.write(('ACT_PIECE :') +'\n')
                     w_file.write((np.array2string(pieces[action.p_id]))+'\n')
                     w_file.write(('ACT_POS (: %i, %i'%( action.pos.i, action.pos.j))+'\n')
                     reward = session.take_action(action)
                     if session.lost:
-                        print('GAME OVER!')
+                        #print('GAME OVER!')
                         infer_res[i] = {'score': session.score,
                                         'actions': t,
                                         'pops': pops,
                                         't': round(time.time()-start,2)
                                         }
                         state_str = session.state_str()
-                        print(state_str)
+                        #print(state_str)
                         w_file.write((state_str) + '\n')
                         agent.games_played += 1
                         break
@@ -141,6 +141,11 @@ while agent.games_played < max_eps:
             w_file.write(train_res)
             w_file.write('Infer Results:\n')
             w_file.write('RUN|SCORE|ACTIONS|POPS|T\n')
+            inf_score, inf_act, inf_pops = [],[],[]
             for i, res in infer_res.items():
                 print('%i|%i|%i|%i|%.2f'%(i, res['score'], res['actions'], res['pops'], res['t']))
                 w_file.write(('%i|%i|%i|%i|%.2f'%(i, res['score'], res['actions'], res['pops'], res['t']))+'\n')
+                inf_score.append(res['score'])
+                inf_act.append(res['actions'])
+                inf_pops.append(res['pops'])
+            print('AVGS - SCORE: %.2f|ACTS: %.2f|POPS: %.2f'%(sum(inf_score)/len(inf_score), sum(inf_act)/len(inf_act), sum(inf_pops)/len(inf_pops)))

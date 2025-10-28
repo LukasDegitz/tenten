@@ -26,11 +26,15 @@ pieces = [
     np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]]),
 ]
 
+wheres = [np.where(piece == 1) for piece in pieces]
+sums = np.array([piece.sum() for piece in pieces])
+
 tensor_pieces = [torch.tensor(piece, dtype=torch.float) for piece in pieces]
 
 #pad and transform pieces for fft convolution
-transformed_pieces = [np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
-                      for p in pieces]
+transformed_pieces = np.array([np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
+                      for p in pieces])
+
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
@@ -67,15 +71,8 @@ def position_mask(board):
 
     board_inv = np.logical_not(board).astype(int)
     board_trans = np.fft.fft2(board_inv)
-    mask = np.zeros((19, 10, 10))
-    # convolute all possible pieces with the inverted board to get the mask of all possible
-    # positions. Make use of the fft convolution trick.
-    for p_enum, (piece, transformed_piece) in enumerate(zip(pieces, transformed_pieces)):
-        board_conv = np.fft.ifft2(board_trans * np.conj(transformed_piece))
-        #print(np.real(board_conv), piece, pieces[piece])
-        #print(base_position_mask[piece])
-        mask[p_enum] = (np.real(board_conv) >= piece.sum()-0.01).astype(int)
-
+    board_conv = np.fft.ifft2(board_trans * np.conj(transformed_pieces))
+    mask = (np.real(board_conv) >= np.repeat(sums,100).reshape((19, 10, 10))-0.01).astype(int)
     mask = np.multiply(mask, base_position_mask)
 
     # TODO: replace base position matrix and transformed_pieces with correct/efficent padding
@@ -89,23 +86,41 @@ def transform_state(state: State):
     piece_ids = np.repeat(state.pieces, n_possible_positions, axis=0)
     possible_piece_positions = np.where(mask[state.pieces] == 1)
 
+    expansion_factor = [len(wheres[p_id][0]) for p_id in piece_ids]
+    expanded_position = [np.repeat(possible_position, expansion_factor) for possible_position in possible_piece_positions]
+
+    expanded_position[0] = np.repeat(np.arange(len(piece_ids)), expansion_factor)
+    expanded_position[1] += np.concatenate(
+        tuple(np.tile(wheres[state.pieces[e]][0], rep) for e, rep in enumerate(n_possible_positions)))
+    expanded_position[2] += np.concatenate(
+        tuple(np.tile(wheres[state.pieces[e]][1], rep) for e, rep in enumerate(n_possible_positions)))
+
+    expanded_position = tuple(expanded_position)
     piece_position_boards = np.repeat([state.board], n_possible_positions.sum(), axis=0)
-    possible_states = np.zeros((n_possible_positions.sum(), 20, 10))
+    piece_position_boards[expanded_position] = 1
+
+    b_is = np.where(piece_position_boards.sum(axis=1) == 10)
+    b_js = np.where(piece_position_boards.sum(axis=2) == 10)
+
+    piece_position_boards[b_is[0], :, b_is[1]] = 0
+    piece_position_boards[b_js[0], :, b_js[1]] = 0
+
+    boards_inv = np.logical_not(piece_position_boards).astype(int)
+    boards_trans = np.fft.fft2(boards_inv).reshape((len(piece_ids), 1, 10, 10))
+    boards_conv = np.fft.ifft2(boards_trans * np.conj(transformed_pieces))
+
+    possible_states = (np.real(boards_conv) >= np.repeat(sums, 100).reshape((19, 10, 10)) - 0.01).astype(int)
+    possible_states = np.multiply(possible_states, base_position_mask)
+    possible_states = possible_states.sum(axis=1)/len(pieces)
+
     current_state = mask.sum(axis=0)/len(pieces)
+    current_state = np.tile(current_state .reshape((100,)), len(piece_ids)).reshape(len(piece_ids), 10, 10)
 
-    for p_enum, (piece_id, position_i, position_j, board) in enumerate(zip(piece_ids, possible_piece_positions[1], possible_piece_positions[2], piece_position_boards)):
-        board[position_i:position_i+pieces[piece_id].shape[0],
-              position_j:position_j+pieces[piece_id].shape[1]] += pieces[piece_id]
-        b_is, b_js = np.where(board.sum(axis=1) == 10)[0], np.where(board.sum(axis=0) == 10)[0]
-        board[b_is, :] = 0
-        board[:, b_js] = 0
-
-        # mask board and compute average (todo: replace with weighted sum e.g. by available piece > any piece)
-        possible_states[p_enum] = np.concatenate((current_state, position_mask(board).sum(axis=0)/len(pieces)))
+    transformed_state = np.concatenate((current_state, possible_states), axis=1)
 
     possible_actions = (piece_ids, possible_piece_positions[1], possible_piece_positions[2])
-    possible_states = torch.tensor(possible_states, dtype=torch.float)
-    return (possible_states, possible_actions)
+    transformed_state = torch.tensor(transformed_state, dtype=torch.float)
+    return (transformed_state, possible_actions)
 
 def transform_action(current_possible_actions, q_hat):
     return Action(current_possible_actions[0][q_hat], Position(current_possible_actions[1][q_hat], current_possible_actions[2][q_hat]))
