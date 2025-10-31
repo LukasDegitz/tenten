@@ -1,7 +1,7 @@
 import numpy as np
 import time
 from dql import D3QN, ReplayMemory, Transition
-from utils import State, Action, Position, random_valid_action, gaussian2d, pieces, transform_state
+from utils import mid_penalty_matrix, gaussian2d, pieces, sums
 import torch
 import random
 import math
@@ -31,7 +31,7 @@ class Agent(object):
     EPS_DECAY = None
 
     def __init__(self, device='cuda', batch_size=64, gamma=0.99, eps_start=0.9,
-                 eps_end=0.05, eps_decay=10000, lr=1e-4, beta=0.5, tau=0.005):
+                 eps_end=0.05, eps_decay=10000, lr=1e-4, beta=1, tau=0.005):
 
         self.BETA = beta  #Penalty for a "full board"
         self.TAU = tau
@@ -42,7 +42,7 @@ class Agent(object):
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = torch.optim.AdamW(self.policy_net.parameters(), lr=lr, amsgrad=True)
-        self.memory = ReplayMemory(100)
+        self.memory = ReplayMemory(10000)
         self.loss = torch.nn.SmoothL1Loss()
         self.mem_cache = {}
 
@@ -143,7 +143,7 @@ class Agent(object):
         #    param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
-    def reward(self, session_score, board, action):
+    def reward(self, session_score, mask, action):
 
         if session_score < 0:
             return -1
@@ -154,8 +154,13 @@ class Agent(object):
         #normalize session score to 1
         #to prevent overestimation of big pieces
         session_score -= (pieces[action.p_id].sum() - 1)
-        # 0 < penalty < beta -> penalize full boards
-        penalty = self.BETA * (board.sum()/100)
+
+        # 0 < penalty < beta -> penalize full boards with mid pid penalty
+        # (base_position_mask.sum(axis=(1,2)) * sums).sum() = 5252
+        penalty = (self.BETA * ((mask.sum(axis=(1, 2)) * sums).sum() / 5252))
+        #penalty = (self.BETA * ((board * mid_penalty_matrix).sum()/mid_penalty_matrix.sum())) + \
+        #          ((1 - self.BETA) * ((holes+isles)/100))
+
         #print(session_score, penalty, session_score * (1 - penalty))
         return session_score * (1 - penalty)# + pops_bonus
 

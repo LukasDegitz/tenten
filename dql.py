@@ -80,9 +80,11 @@ class mainNN(torch.nn.Module):
         #    torch.nn.MaxPool2d(2, 1)
         #)
         self.lin = torch.nn.Sequential(
-            torch.nn.Linear(200, 256),
+            torch.nn.Linear(2138, 2048),
             torch.nn.ReLU(),
-            torch.nn.Linear(256, 512),
+            torch.nn.Linear(2048, 1024),
+            torch.nn.ReLU(),
+            torch.nn.Linear(1024, 512),
             torch.nn.ReLU(),
             torch.nn.Linear(512, 256),
             torch.nn.ReLU(),
@@ -114,6 +116,6 @@ class D3QN(torch.nn.Module):
     def forward(self, current_state):
         #expects current_state = (batch_size, 20, 10)
         current_state = current_state.to(self.device)
-        current_state = current_state.reshape((current_state.size()[0], 200))
+        #current_state = current_state.reshape((current_state.size()[0], 2000))
         res = self.mainNN(current_state)
         return res

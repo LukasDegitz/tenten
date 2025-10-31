@@ -43,6 +43,9 @@ class Session:
     def get_state(self):
         return State(self.board.copy(), self.pieces.copy())
 
+    def get_mask(self):
+        return self.mask.copy()
+
     def get_transformed_state(self):
         return transform_state(self.get_state())
 

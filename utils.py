@@ -111,12 +111,20 @@ def transform_state(state: State):
 
     possible_states = (np.real(boards_conv) >= np.repeat(sums, 100).reshape((19, 10, 10)) - 0.01).astype(int)
     possible_states = np.multiply(possible_states, base_position_mask)
-    possible_states = possible_states.sum(axis=1)/len(pieces)
+    #possible_states = possible_states.sum(axis=1)/len(pieces)
 
-    current_state = mask.sum(axis=0)/len(pieces)
-    current_state = np.tile(current_state .reshape((100,)), len(piece_ids)).reshape((len(piece_ids), 10, 10))
+    #current_state = mask.sum(axis=0)/len(pieces)
+    current_state = np.tile(state.board.reshape((100,)), len(piece_ids)).reshape((len(piece_ids), 1, 10, 10))
 
-    transformed_state = np.concatenate((current_state, possible_states), axis=1)
+    transformed_state = np.concatenate((current_state, piece_position_boards.reshape((len(piece_ids),1,10,10)), possible_states), axis=1)
+    transformed_state = transformed_state.reshape(len(piece_ids), 2100)
+
+    piece_vector = np.zeros((19,))
+    piece_vector[state.pieces] = 1
+    piece_vectors = np.repeat(piece_vector.reshape(1, 19), len(piece_ids), axis=0)
+    next_piece_vectors = piece_vectors.copy()
+    next_piece_vectors[np.arange(len(piece_ids)), piece_ids] = 0
+    transformed_state = np.concatenate((piece_vectors, next_piece_vectors, transformed_state), axis=1)
 
     possible_actions = (piece_ids, possible_piece_positions[1], possible_piece_positions[2])
     transformed_state = torch.tensor(transformed_state, dtype=torch.float)
@@ -138,6 +146,19 @@ def random_valid_action(state: State):
     i, j = divmod(pos, 10)
     return Action(p_id, Position(i, j))
 
+
+mid_penalty_matrix = np.array([
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+    [1, 2, 3, 3, 3, 3, 3, 3, 2, 1],
+    [1, 2, 3, 4, 4, 4, 4, 3, 2, 1],
+    [1, 2, 3, 4, 5, 5, 4, 3, 2, 1],
+    [1, 2, 3, 4, 5, 5, 4, 3, 2, 1],
+    [1, 2, 3, 4, 4, 4, 4, 3, 2, 1],
+    [1, 2, 3, 3, 3, 3, 3, 3, 2, 1],
+    [1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+])
 
 base_position_mask = np.array(
     [

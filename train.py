@@ -40,8 +40,8 @@ while agent.games_played < max_eps:
         action = transform_action(current_possible_actions, q_hat)
         step_score = session.take_action(action)
         next_state_transformed, next_possible_actions = session.get_transformed_state()
+        rewards = agent.reward(step_score, session.get_mask(), action)
 
-        rewards = agent.reward(step_score, session.board, action)
         agent.push_batch(step_score, state=current_state_transformed, action=q_hat, next_state=next_state_transformed)
         if session.lost:
 
@@ -156,5 +156,7 @@ while agent.games_played < max_eps:
                 inf_act.append(res['actions'])
                 inf_pops.append(res['pops'])
             print('AVGS - SCORE: %.2f|ACTS: %.2f|POPS: %.2f'%(sum(inf_score)/len(inf_score), sum(inf_act)/len(inf_act), sum(inf_pops)/len(inf_pops)))
+            w_file.write(('AVGS - SCORE: %.2f|ACTS: %.2f|POPS: %.2f' % (
+            sum(inf_score) / len(inf_score), sum(inf_act) / len(inf_act), sum(inf_pops) / len(inf_pops))))
             with open(train_log_path, 'a') as train_log_file:
-                train_log_file.write(('INFER - SCORE: %.2f|ACTS: %.2f|POPS: %.2f'%(sum(inf_score)/len(inf_score), sum(inf_act)/len(inf_act), sum(inf_pops)/len(inf_pops)))+'\n')
+                train_log_file.write(('INFER AVG - SCORE: %.2f|ACTS: %.2f|POPS: %.2f'%(sum(inf_score)/len(inf_score), sum(inf_act)/len(inf_act), sum(inf_pops)/len(inf_pops)))+'\n')
