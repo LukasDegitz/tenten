@@ -103,7 +103,7 @@ def transform_state(state: State):
     b_js = np.where(piece_position_boards.sum(axis=2) == 10)
 
     piece_position_boards[b_is[0], :, b_is[1]] = 0
-    piece_position_boards[b_js[0], :, b_js[1]] = 0
+    piece_position_boards[b_js[0], b_js[1], :] = 0
 
     boards_inv = np.logical_not(piece_position_boards).astype(int)
     boards_trans = np.fft.fft2(boards_inv).reshape((len(piece_ids), 1, 10, 10))
@@ -114,7 +114,7 @@ def transform_state(state: State):
     possible_states = possible_states.sum(axis=1)/len(pieces)
 
     current_state = mask.sum(axis=0)/len(pieces)
-    current_state = np.tile(current_state .reshape((100,)), len(piece_ids)).reshape(len(piece_ids), 10, 10)
+    current_state = np.tile(current_state .reshape((100,)), len(piece_ids)).reshape((len(piece_ids), 10, 10))
 
     transformed_state = np.concatenate((current_state, possible_states), axis=1)
 

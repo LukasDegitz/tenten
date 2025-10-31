@@ -115,5 +115,5 @@ class D3QN(torch.nn.Module):
         #expects current_state = (batch_size, 20, 10)
         current_state = current_state.to(self.device)
         current_state = current_state.reshape((current_state.size()[0], 200))
-
-        return self.mainNN(current_state)
+        res = self.mainNN(current_state)
+        return res

@@ -24,6 +24,7 @@ agent = Agent(device=device)
 #agent.init_memory('saves')
 start = time.time()
 cp_path = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_cp.pt'
+train_log_path = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_trainlog.txt'
 save_every = 500
 while agent.games_played < max_eps:
 
@@ -49,6 +50,8 @@ while agent.games_played < max_eps:
                 max_score['e'] = agent.games_played
                 max_score['s'] = session.score
                 print('%i - Max Score: %i  | %i' % (agent.games_played, session.score, t))
+                with open(train_log_path, 'a') as train_log_file:
+                    train_log_file.write(('EPS %i: Max Score: %i  | Actions: %i' % (agent.games_played, session.score, t))+'\n')
             agent.games_played += 1
             break
 
@@ -66,6 +69,10 @@ while agent.games_played < max_eps:
         print('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'
               % (agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
                  total_pops/agent.games_played, time.time()-start))
+        with open(train_log_path, 'a') as train_log_file:
+            train_log_file.write(('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'
+              % (agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
+                 total_pops/agent.games_played, time.time()-start))+'\n')
 
     if agent.games_played % save_every == 0:
         torch.save(agent.policy_net.state_dict(), cp_path)
@@ -149,3 +156,5 @@ while agent.games_played < max_eps:
                 inf_act.append(res['actions'])
                 inf_pops.append(res['pops'])
             print('AVGS - SCORE: %.2f|ACTS: %.2f|POPS: %.2f'%(sum(inf_score)/len(inf_score), sum(inf_act)/len(inf_act), sum(inf_pops)/len(inf_pops)))
+            with open(train_log_path, 'a') as train_log_file:
+                train_log_file.write(('INFER - SCORE: %.2f|ACTS: %.2f|POPS: %.2f'%(sum(inf_score)/len(inf_score), sum(inf_act)/len(inf_act), sum(inf_pops)/len(inf_pops)))+'\n')

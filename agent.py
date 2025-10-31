@@ -31,7 +31,7 @@ class Agent(object):
     EPS_DECAY = None
 
     def __init__(self, device='cuda', batch_size=64, gamma=0.99, eps_start=0.9,
-                 eps_end=0.05, eps_decay=10000, lr=1e-4, beta=0, tau=0.005):
+                 eps_end=0.05, eps_decay=10000, lr=1e-4, beta=0.5, tau=0.005):
 
         self.BETA = beta  #Penalty for a "full board"
         self.TAU = tau
@@ -42,7 +42,7 @@ class Agent(object):
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = torch.optim.AdamW(self.policy_net.parameters(), lr=lr, amsgrad=True)
-        self.memory = ReplayMemory(1000)
+        self.memory = ReplayMemory(100)
         self.loss = torch.nn.SmoothL1Loss()
         self.mem_cache = {}
 
@@ -132,6 +132,7 @@ class Agent(object):
 
         # Compute Huber loss
         loss = self.loss(state_action_values, expected_state_action_values)
+        #print(loss)
         #print(state_action_value.size(), expected_state_action_value.size())
         # Optimize the model
         self.optimizer.zero_grad()
@@ -145,18 +146,18 @@ class Agent(object):
     def reward(self, session_score, board, action):
 
         if session_score < 0:
-            return -10
-        pops_bonus, _ = divmod(session_score, 10)
+            return -1
+        #pops_bonus, _ = divmod(session_score, 10)
 
-        return 1+pops_bonus
+        #return 1+pops_bonus
 
         #normalize session score to 1
         #to prevent overestimation of big pieces
-        #session_score -= (pieces[action.p_id].sum() - 1)
+        session_score -= (pieces[action.p_id].sum() - 1)
         # 0 < penalty < beta -> penalize full boards
-        #penalty = self.BETA * (board.sum()/100)
+        penalty = self.BETA * (board.sum()/100)
         #print(session_score, penalty, session_score * (1 - penalty))
-        #return session_score * (1 - penalty) + pops_bonus
+        return session_score * (1 - penalty)# + pops_bonus
 
     def update_target(self):
         # soft update
