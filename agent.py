@@ -1,7 +1,7 @@
 import numpy as np
 import time
 from dql import D3QN, ReplayMemory, Transition
-from utils import mid_penalty_matrix, gaussian2d, pieces, sums
+from utils import mid_penalty_matrix, gaussian2d, pieces, sums, base_position_mask
 import torch
 import random
 import math
@@ -23,6 +23,7 @@ class Agent(object):
     highscore = None
 
     # training params
+    ALPHA = None
     BETA = None
     BATCH_SIZE = None
     GAMMA = None
@@ -31,9 +32,10 @@ class Agent(object):
     EPS_DECAY = None
 
     def __init__(self, device='cuda', batch_size=64, gamma=0.99, eps_start=0.9,
-                 eps_end=0.05, eps_decay=10000, lr=1e-4, beta=1, tau=0.005):
+                 eps_end=0.05, eps_decay=10000, lr=1e-4, alpha=0.2, beta=0.5, tau=0.005):
 
-        self.BETA = beta  #Penalty for a "full board"
+        self.ALPHA = alpha #Penalty for a "full board"
+        self.BETA = beta  #full board trade of between placability and centeredness
         self.TAU = tau
         self.device = device
         # double deep q learning - decouple action value estimation from q value estimation
@@ -143,26 +145,65 @@ class Agent(object):
         #    param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
-    def reward(self, session_score, mask, action):
+    def reward(self, session_score, action, current_state, next_state, current_mask, next_mask):
 
         if session_score < 0:
-            return -1
+            return -10
         #pops_bonus, _ = divmod(session_score, 10)
 
         #return 1+pops_bonus
 
         #normalize session score to 1
         #to prevent overestimation of big pieces
-        session_score -= (pieces[action.p_id].sum() - 1)
+        #session_score #-= (pieces[action.p_id].sum() - 1)
 
         # 0 < penalty < beta -> penalize full boards with mid pid penalty
         # (base_position_mask.sum(axis=(1,2)) * sums).sum() = 5252
-        penalty = (self.BETA * ((mask.sum(axis=(1, 2)) * sums).sum() / 5252))
-        #penalty = (self.BETA * ((board * mid_penalty_matrix).sum()/mid_penalty_matrix.sum())) + \
-        #          ((1 - self.BETA) * ((holes+isles)/100))
 
+
+
+        #change in next pieces placeability
+        current_piece_placeability = ((current_mask[current_state.pieces].sum(axis=(1, 2)) * sums[current_state.pieces]).sum())/ \
+        (base_position_mask[current_state.pieces].sum(axis=(1, 2)) * sums[current_state.pieces]).sum()
+        next_piece_placeability = ((next_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum())/ \
+        (base_position_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum()
+
+        pen_a = max((current_piece_placeability - next_piece_placeability)/current_piece_placeability,0)
+        #((next_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum() / \
+        #(base_position_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum())
+
+        # change in piece placebility general (0-1 -> low to high penalisation)
+        current_placability = ((current_mask.sum(axis=(1, 2)) * sums).sum())
+        next_placability = ((next_mask.sum(axis=(1, 2)) * sums).sum())
+        pen_b = max((current_placability - next_placability)/current_placability,0)
+
+        # penalty for placing pieces in the center (0-1 -> low to high penalisation)
+        current_centricity=(current_state.board*mid_penalty_matrix).sum()
+        next_centricity=(next_state.board*mid_penalty_matrix).sum()
+        pen_c = max((next_centricity - current_centricity)/(sums[action.p_id]*5),0)
+
+        #penalty = (self.ALPHA * pen_a) + (1 - self.ALPHA) * ((self.BETA * pen_b) + (1 - self.BETA) * pen_c)
+        penalty = max(pen_a, pen_b, pen_c)
+
+        #if session_score > 10:
+        #print('**'*25)
+        #print(next_state.board)
+        #print(pieces[action.p_id])
+        #print(action.pos)
+        #print('%i,%.2f,%.2f,%.2f,%.2f|%.2f'%(session_score, pen_a, pen_b, pen_c, penalty, session_score * (1 - penalty)))
+        #print('**' * 25)
+        # center board penalty
+
+        #build the penalty
+
+        #(self.BETA * ((board * mid_penalty_matrix).sum()/mid_penalty_matrix.sum())) + \
+        #          ((1 - self.BETA) * ((holes+isles)/100))
+        #print(np.logical_not(mask[0]).astype(int))
         #print(session_score, penalty, session_score * (1 - penalty))
-        return session_score * (1 - penalty)# + pops_bonus
+        #print(session_score, penalty, session_score * (1 - penalty))
+        #return (session_score * (1 - pen_a)) - self.ALPHA * ((self.BETA * pen_b) + ((1-self.BETA) * pen_c))
+
+        return session_score * (1 - penalty)
 
     def update_target(self):
         # soft update

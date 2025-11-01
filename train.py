@@ -4,14 +4,15 @@ import numpy as np
 import torch
 from agent import Agent
 from game import Session
-from utils import pieces, transform_action
+from utils import pieces, transform_action, transform_state
 import time
+import math
 
 TARGET_UPDATE = 50
 optim_every = 4
 log_every = 10
 device = 'cuda'
-max_eps = 10000
+max_eps = 50000
 
 max_score = {'e': -1, 's': 0}
 
@@ -23,25 +24,33 @@ print('initializing agent')
 agent = Agent(device=device)
 #agent.init_memory('saves')
 start = time.time()
-cp_path = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_cp.pt'
+
 train_log_path = 'res/'+time.strftime('%y%m%d_%H%M%S')+'_trainlog.txt'
 save_every = 500
 while agent.games_played < max_eps:
 
     # initialize game session
     session = Session()
-    next_state_transformed, next_possible_actions = session.get_transformed_state()
+    next_state = session.get_state()
+    #next_state_transformed, next_possible_actions = session.get_transformed_state()
+    next_mask = session.get_mask()
+
     #play until the session is lost (i.e. no more possible moves)
     for t in count():
 
-        current_state_transformed, current_possible_actions = next_state_transformed, next_possible_actions
+        current_state = next_state
+        current_state_transformed, current_possible_actions = transform_state(current_state)
+        current_mask = next_mask
 
         q_hat = agent.select_action(current_state_transformed)
         action = transform_action(current_possible_actions, q_hat)
         step_score = session.take_action(action)
-        next_state_transformed, next_possible_actions = session.get_transformed_state()
-        rewards = agent.reward(step_score, session.get_mask(), action)
-
+        next_state = session.get_state()
+        next_state_transformed, next_possible_actions = transform_state(next_state)
+        next_mask = session.get_mask()
+        rewards = agent.reward(step_score, action, current_state, next_state, current_mask, next_mask)
+        #print(session.state_str())
+        #print(rewards)
         agent.push_batch(step_score, state=current_state_transformed, action=q_hat, next_state=next_state_transformed)
         if session.lost:
 
@@ -66,15 +75,17 @@ while agent.games_played < max_eps:
         agent.update_target()
 
     if agent.games_played % 20 == 1:
-        print('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'
+        print('EPS %i: AS  %.2f|AA %.2f|AP %.2f|T: %.2f'
               % (agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
                  total_pops/agent.games_played, time.time()-start))
         with open(train_log_path, 'a') as train_log_file:
-            train_log_file.write(('EPS %i: AS  %.2f|AA %.2f|AP %.2f| T: %.2f'
+            train_log_file.write(('EPS %i: AS  %.2f|AA %.2f|AP %.2f|T: %.2f'
               % (agent.games_played, total_score/agent.games_played, agent.actions_taken/agent.games_played,
                  total_pops/agent.games_played, time.time()-start))+'\n')
 
     if agent.games_played % save_every == 0:
+
+        cp_path = 'res/' + time.strftime('%y%m%d_%H%M%S') + '_cp.pt'
         torch.save(agent.policy_net.state_dict(), cp_path)
 
         agent.policy_net.eval()
@@ -93,14 +104,14 @@ while agent.games_played < max_eps:
             w_file.write('infer start:\n')
 
 
-            for i in range(10):
+            for i in range(20):
                 #print('#' * 50)
                 #print('EPS %i' % i)
                 w_file.write(('#' * 50) + '\n')
                 w_file.write(('EPS %i' % i) + '\n')
                 session = Session()
                 pops = 0
-                start = time.time()
+                inf_start = time.time()
                 # play until the session is lost (i.e. no more possible moves)
                 for t in count():
                     #print('-'*30)
@@ -129,7 +140,7 @@ while agent.games_played < max_eps:
                         infer_res[i] = {'score': session.score,
                                         'actions': t,
                                         'pops': pops,
-                                        't': round(time.time()-start,2)
+                                        't': round(time.time()-inf_start,2)
                                         }
                         state_str = session.state_str()
                         #print(state_str)
