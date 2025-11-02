@@ -1,8 +1,8 @@
 from tkinter import *
 from game import Session
-from utils import Position, Action, pieces
+from utils import Position, Action, pieces, transform_state, transform_action, wheres
 import numpy as np
-import os
+from agent import Agent
 
 class GameUI(object):
 
@@ -13,12 +13,34 @@ class GameUI(object):
     score_text = None
     piece_grid_array = None
 
-    save_file = None
+    agent = None
+    visualize_action = None
+    reward = None
+    next_state = None
+    next_mask = None
+
     session = Session()
 
     def __init__(self):
 
         self.session = Session()
+
+        # initialize agent
+        agent_cp_path = input('Load agent cp path, enter for None, New for New:')
+        self.visualize_action = False
+        if not agent_cp_path:
+            self.agent = None
+        else:
+            self.reward = 0.00
+            self.next_state = self.session.get_state()
+            self.next_mask = self.session.get_mask()
+
+            if agent_cp_path.lower() == 'new':
+                self.agent = Agent(device='cuda')
+            else:
+                self.agent = Agent(device='cuda')
+                self.agent.load_model(agent_cp_path)
+                self.visualize_action = True
 
         self.root = Tk()
         self.board_grid = Frame(self.root)
@@ -40,7 +62,10 @@ class GameUI(object):
 
         self.score_text = Label(self.piece_grid)
         self.score_text.grid(column=1, row=0)
-        self.score_text.config(text="Score: %i" % self.session.score)
+        if self.agent:
+            self.score_text.config(text="Score: %i, Reward: %.2f" %(self.session.score, self.reward))
+        else:
+            self.score_text.config(text="Score: %i" % self.session.score)
 
         self.piece_button_array = [1, 2, 3]
         self.piece_button_array[0] = Button(self.piece_grid,  width=50, command=lambda: self.piece_button_pressed(0))
@@ -75,39 +100,43 @@ class GameUI(object):
             self.piece_grid_array[2][r].config(bg="white")
             self.piece_grid_array[2][r].grid(column=j, row=i)
 
-        self.update_pieces(self.session.pieces)
+        self.update_pieces()
+        self.update_board()
 
-        for k in range(1000):
-            pot_file = 'saves/save%i.csv' % k
-            if os.path.exists(pot_file):
-                continue
-            else:
-                self.save_file = pot_file
-                with open(self.save_file, 'w') as f:
-                    f.write('act_p_id|act_pos_i|act_pos_j|reward|s_p0|s_p1|s_p2|board_state\n')
-
-                break
 
     def board_button_pressed(self, t):
 
         if self.piece_button_value == -1:
             return
         else:
+
             pos_i, pos_j = divmod(t, 10)
             action = Action(self.session.pieces[self.piece_button_value], Position(pos_i, pos_j))
-            board_state = self.session.board.copy()
-            pieces_state = self.session.pieces.copy()
+
+            # current_state
+            current_state = self.next_state
+            current_mask = self.next_mask
+
             step_score = self.session.take_action(action)
-            if step_score < 0:
-                if step_score == -1000:
-                    self.write_action(action, step_score, pieces_state, board_state)
-                    self.write_action(action, 0, self.session.pieces, self.session.board)
-                    self.stop()
+
+            #invalid action
+            if step_score == -1:
                 return
-            self.update_board(self.session.board)
-            self.update_pieces(self.session.pieces)
-            self.update_score(self.session.score)
-            self.write_action(action, step_score,pieces_state, board_state)
+
+            if step_score == -1000:
+                self.stop()
+                return
+
+            # get next state
+            self.next_state = self.session.get_state()
+            self.next_mask = self.session.get_mask()
+
+            if self.agent:
+                self.reward = self.agent.reward(step_score, action, current_state, self.next_state, current_mask, self.next_mask)
+
+            self.update_board()
+            self.update_pieces()
+            self.update_score()
 
     def piece_button_pressed(self, t):
         if t >= len(self.session.pieces):
@@ -125,21 +154,37 @@ class GameUI(object):
             self.piece_button_value = t
             self.piece_button_array[t].config(bg='black')
 
-    def update_board(self, board):
+    def update_board(self):
+
+        if self.visualize_action:
+
+            # state representation
+            current_state = self.next_state
+            current_state_transformed, current_possible_actions = transform_state(current_state)
+
+            # compute action
+            q_hat = self.agent.select_action(current_state_transformed)
+            agent_action = transform_action(current_possible_actions, q_hat)
+            proposed_action_ijs = [[i + agent_action.pos.i, j + agent_action.pos.j]
+                                   for i, j in zip(wheres[agent_action.p_id][0], wheres[agent_action.p_id][1])]
+
         for t in range(100):
             i, j = divmod(t, 10)
-            if board[i, j] == 1:
+            if self.session.board[i, j] == 1:
                 self.board_button_array[t].config(bg='black')
+            elif self.visualize_action and [i, j] in proposed_action_ijs:
+                self.board_button_array[t].config(bg='light blue')
             else:
                 self.board_button_array[t].config(bg='white')
 
-    def update_pieces(self, sess_pieces):
+    def update_pieces(self):
+
         for t in range(3):
-            if t >= len(sess_pieces):
+            if t >= len(self.session.pieces):
                 for f in self.piece_grid_array[t]:
                     f.config(bg="white")
             else:
-                piece = pieces[sess_pieces[t]]
+                piece = pieces[self.session.pieces[t]]
                 p_size = np.shape(piece)
                 for k in range(25):
                     i, j = divmod(k, 5)
@@ -154,18 +199,11 @@ class GameUI(object):
 
 
 
-    def update_score(self, score):
-        self.score_text.config(text="Score: %i" % score)
-
-
-    def write_action(self, action: Action, reward, state_pieces, state_board):
-        with open(self.save_file, 'a+') as f:
-            p = [-1, -1, -1]
-            for i in range(3):
-                if i < len(state_pieces):
-                    p[i] = state_pieces[i]
-            f.write('%i|%i|%i|%i|%i|%i|%i|%s\n' % (action.p_id, action.pos.i, action.pos.j, reward, p[0], p[1], p[2],
-                                        np.array_str(state_board.reshape((100)), max_line_width=500)))
+    def update_score(self):
+        if self.agent:
+            self.score_text.config(text="Score: %i, Reward: %.2f" % (self.session.score, self.reward))
+        else:
+            self.score_text.config(text="Score: %i" % self.session.score)
 
     def show(self):
         self.root.mainloop()
