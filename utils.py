@@ -2,7 +2,6 @@ import numpy as np
 import random as rd
 import torch
 from collections import namedtuple
-from scipy.stats import multivariate_normal
 
 pieces = [
     np.array([[1]]),
@@ -32,40 +31,21 @@ sums = np.array([piece.sum() for piece in pieces])
 tensor_pieces = [torch.tensor(piece, dtype=torch.float) for piece in pieces]
 
 #pad and transform pieces for fft convolution
-transformed_pieces = np.array([np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
-                      for p in pieces])
+transformed_pieces = \
+    np.array([np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
+              for p in pieces])
 
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
 State = namedtuple("State", ["board", "pieces"])
-#TransformedState = namedtuple("TransformedState", ["current", "possible", "actions"])
 
 def get_pieces():
     return rd.choices(range(len(pieces)), k=3)
 
-
 def little_gauss(n):
     #Bester Mann!!
     return int((n*n + n)/2)
-
-def gaussian2d():
-    x, y = np.mgrid[-4.5:4.6:1, -4.5:4.6:1]
-    pos = np.dstack((x, y))
-    var = multivariate_normal(mean=[0, 0], cov=[[1, 0],[0, 1]])
-    return var.pdf(pos)
-
-
-def sigmoid_mask(x: torch.Tensor, mask: torch.Tensor = 1):
-
-    return torch.sigmoid(x) * mask
-
-def parse_action(action_tensor: torch.Tensor):
-    array_idm = action_tensor.item()
-    p_id, pos_arr = divmod(array_idm, 100)
-    i,j = divmod(pos_arr, 10)
-    return Action(p_id, Position(i, j))
-
 
 def position_mask(board):
 
@@ -111,20 +91,25 @@ def transform_state(state: State):
 
     possible_states = (np.real(boards_conv) >= np.repeat(sums, 100).reshape((19, 10, 10)) - 0.01).astype(int)
     possible_states = np.multiply(possible_states, base_position_mask)
-    #possible_states = possible_states.sum(axis=1)/len(pieces)
 
-    #current_state = mask.sum(axis=0)/len(pieces)
-    current_state = np.tile(state.board.reshape((100,)), len(piece_ids)).reshape((len(piece_ids), 1, 10, 10))
+    #comment here
+    possible_states = (possible_states.sum(axis=1)/len(pieces)).reshape((len(piece_ids), 1, 10, 10))
+    current_state = mask.sum(axis=0)/len(pieces)
+    current_state = np.tile(current_state.reshape((100,)), len(piece_ids)).reshape((len(piece_ids), 1, 10, 10))
+    transformed_state = np.concatenate((current_state, possible_states), axis=1).reshape((len(piece_ids), 200))
 
-    transformed_state = np.concatenate((current_state, piece_position_boards.reshape((len(piece_ids),1,10,10)), possible_states), axis=1)
-    transformed_state = transformed_state.reshape(len(piece_ids), 2100)
+    #comment here
+    #current_state = np.tile(state.board.reshape((100,)), len(piece_ids)).reshape((len(piece_ids), 1, 10, 10))
+    #transformed_state = np.concatenate((current_state, piece_position_boards.reshape((len(piece_ids),1,10,10)), possible_states), axis=1)
+    #transformed_state = transformed_state.reshape(len(piece_ids), 2100)
 
     piece_vector = np.zeros((19,))
     piece_vector[state.pieces] = 1
     piece_vectors = np.repeat(piece_vector.reshape(1, 19), len(piece_ids), axis=0)
     next_piece_vectors = piece_vectors.copy()
     next_piece_vectors[np.arange(len(piece_ids)), piece_ids] = 0
-    transformed_state = np.concatenate((piece_vectors, next_piece_vectors, transformed_state), axis=1)
+    #transformed_state = np.concatenate((piece_vectors, next_piece_vectors, transformed_state), axis=1)
+    transformed_state = np.concatenate((piece_vectors, transformed_state), axis=1)
 
     possible_actions = (piece_ids, possible_piece_positions[1], possible_piece_positions[2])
     transformed_state = torch.tensor(transformed_state, dtype=torch.float)
@@ -148,16 +133,16 @@ def random_valid_action(state: State):
 
 
 mid_penalty_matrix = np.array([
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    [1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
-    [1, 2, 3, 3, 3, 3, 3, 3, 2, 1],
-    [1, 2, 3, 4, 4, 4, 4, 3, 2, 1],
-    [1, 2, 3, 4, 5, 5, 4, 3, 2, 1],
-    [1, 2, 3, 4, 5, 5, 4, 3, 2, 1],
-    [1, 2, 3, 4, 4, 4, 4, 3, 2, 1],
-    [1, 2, 3, 3, 3, 3, 3, 3, 2, 1],
-    [1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+    [0, 1, 2, 2, 2, 2, 2, 2, 1, 0],
+    [0, 1, 2, 3, 3, 3, 3, 2, 1, 0],
+    [0, 1, 2, 3, 4, 4, 3, 2, 1, 0],
+    [0, 1, 2, 3, 4, 4, 3, 2, 1, 0],
+    [0, 1, 2, 3, 3, 3, 3, 2, 1, 0],
+    [0, 1, 2, 2, 2, 2, 2, 2, 1, 0],
+    [0, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 ])
 
 base_position_mask = np.array(

@@ -1,26 +1,21 @@
-import numpy as np
-import time
 from dql import D3QN, ReplayMemory, Transition
-from utils import mid_penalty_matrix, gaussian2d, pieces, sums, base_position_mask
+from utils import mid_penalty_matrix, sums, base_position_mask
 import torch
 import random
 import math
-import os
 
 
 class Agent(object):
 
-    target_nets = None
-    policy_nets = None
-
+    #DQN components
+    target_net = None
+    policy_net = None
     loss = None
     optimizer = None
     memory = None
-    mem_cache = None
 
     actions_taken = None
     games_played = None #eps
-    highscore = None
 
     # training params
     ALPHA = None
@@ -37,7 +32,9 @@ class Agent(object):
         self.ALPHA = alpha #Penalty for a "full board"
         self.BETA = beta  #full board trade of between placability and centeredness
         self.TAU = tau
+
         self.device = device
+
         # double deep q learning - decouple action value estimation from q value estimation
         self.policy_net = D3QN(device).to(device)
         self.target_net = D3QN(device).to(device)
@@ -46,21 +43,15 @@ class Agent(object):
         self.optimizer = torch.optim.AdamW(self.policy_net.parameters(), lr=lr, amsgrad=True)
         self.memory = ReplayMemory(10000)
         self.loss = torch.nn.SmoothL1Loss()
-        self.mem_cache = {}
 
         self.actions_taken = 0
         self.games_played = 0
-        self.highscore = 0
 
         self.BATCH_SIZE = batch_size
         self.GAMMA = gamma
         self.EPS_START = eps_start
         self.EPS_END = eps_end
         self.EPS_DECAY = eps_decay
-        #self.ALPHA = alpha # measures piece vs. position importance
-        #self.last_penalty = {'holes':0, 'comps':0, 'centrality':0}
-        self.gaussian = gaussian2d()
-
 
 
     def select_action(self, current_state, mode='train'):
@@ -75,17 +66,11 @@ class Agent(object):
         self.actions_taken += 1
 
         if sample > eps_threshold:
-
             with torch.no_grad():
-                #print('pred')
-
                 q_hat = self.policy_net(current_state)
-                #q_hat = torch.argmax(q_hat, dim=1)[0]
-                #action =
-
         else:
-            #print('rand')
             q_hat = torch.randn(current_state.size()[0])
+
         q_hat = torch.argmax(q_hat, 0)
         q_hat = q_hat.item()
         #print(q_hat)
@@ -97,15 +82,12 @@ class Agent(object):
         if len(self.memory) < self.BATCH_SIZE:
             return
 
-        #torch.autograd.set_detect_anomaly(True)
-
         transitions = self.memory.sample(self.BATCH_SIZE)
         # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
         # detailed explanation). This converts batch-array of Transitions
         # to Transition of batch-arrays.
         batch = Transition(*zip(*transitions))
 
-        # print(type(batch.state), type(batch.action), type(batch.next_state))
         rewards = torch.cat(batch.reward).to(self.device)
         state = torch.cat(batch.state).to(self.device)
         action = torch.cat(batch.action).to(self.device)
@@ -121,7 +103,6 @@ class Agent(object):
         action_offset = torch.cumsum(action_offset, 0)
 
         state_action_values = self.policy_net(state)
-        #print(state_action_values.size(), action_offset.size(), action.size())
         state_action_values = state_action_values.gather(0, (action_offset+action).unsqueeze(1)).squeeze(1)
 
         with torch.no_grad():
@@ -129,13 +110,13 @@ class Agent(object):
             next_state_values = torch.zeros(self.BATCH_SIZE).to(self.device)
             non_zero_ids = torch.tensor(tuple(i for i, next_len in enumerate(next_state_lens) if next_len))
             next_state_values[non_zero_ids] = torch.cat(tuple(r.max(0)[0] for r in torch.split(next_state_pred, next_state_lens) if r.size()[0]))
+
         # Compute the expected Q values
         expected_state_action_values = (next_state_values * self.GAMMA) + rewards
 
         # Compute Huber loss
         loss = self.loss(state_action_values, expected_state_action_values)
-        #print(loss)
-        #print(state_action_value.size(), expected_state_action_value.size())
+
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
@@ -149,61 +130,38 @@ class Agent(object):
 
         if session_score < 0:
             return -10
-        #pops_bonus, _ = divmod(session_score, 10)
 
-        #return 1+pops_bonus
+        # pen_a: change in next pieces placeability  (0-1 -> low to high penalisation)
+        current_piece_placeability = \
+            ((current_mask[current_state.pieces].sum(axis=(1, 2)) * sums[current_state.pieces]).sum()) / \
+            (base_position_mask[current_state.pieces].sum(axis=(1, 2)) * sums[current_state.pieces]).sum()
 
-        #normalize session score to 1
-        #to prevent overestimation of big pieces
-        #session_score #-= (pieces[action.p_id].sum() - 1)
+        next_piece_placeability = \
+            ((next_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum()) / \
+            (base_position_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum()
 
-        # 0 < penalty < beta -> penalize full boards with mid pid penalty
-        # (base_position_mask.sum(axis=(1,2)) * sums).sum() = 5252
+        #print('current: %.2f, next: %.2f'%(current_piece_placeability, next_piece_placeability))
+        pen_a = max((current_piece_placeability - next_piece_placeability)/current_piece_placeability, 0.001)
 
+        # pen_b: change in general piece placebility general (0-1 -> low to high penalisation)
+        current_placeability = ((current_mask.sum(axis=(1, 2)) * sums).sum())
+        next_placeability = ((next_mask.sum(axis=(1, 2)) * sums).sum())
+        #print('current: %.2f, next: %.2f' % (current_placeability, next_placeability))
+        pen_b = max((current_placeability - next_placeability)/current_placeability, 0.001)
 
+        # pn_c: change in board center occupation (0-1 -> low to high penalisation)
+        current_centricity = (current_state.board*mid_penalty_matrix).sum()
+        next_centricity = (next_state.board*mid_penalty_matrix).sum()
+        #print('current: %.2f, next: %.2f' % (current_centricity, next_centricity))
+        pen_c = max((next_centricity - current_centricity)/(sums[action.p_id]*5), 0.001)
 
-        #change in next pieces placeability
-        current_piece_placeability = ((current_mask[current_state.pieces].sum(axis=(1, 2)) * sums[current_state.pieces]).sum())/ \
-        (base_position_mask[current_state.pieces].sum(axis=(1, 2)) * sums[current_state.pieces]).sum()
-        next_piece_placeability = ((next_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum())/ \
-        (base_position_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum()
+        # penalize biggest penalty of all three full, and parameterized average of others
+        penalties = sorted([pen_a, pen_b, pen_c])
+        penalty = (1 - penalties[2]) * (1 - self.ALPHA * ((self.BETA * penalties[0]) + ((1 - self.BETA) * penalties[1])))
 
-        pen_a = max((current_piece_placeability - next_piece_placeability)/current_piece_placeability,0)
-        #((next_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum() / \
-        #(base_position_mask[next_state.pieces].sum(axis=(1, 2)) * sums[next_state.pieces]).sum())
+        #print('%i, a: %.2f, b: %.2f,c: %.2f, pen: %.2f | rew: %.2f'%(session_score,pen_a, pen_b, pen_c, penalty, session_score * penalty))
 
-        # change in piece placebility general (0-1 -> low to high penalisation)
-        current_placability = ((current_mask.sum(axis=(1, 2)) * sums).sum())
-        next_placability = ((next_mask.sum(axis=(1, 2)) * sums).sum())
-        pen_b = max((current_placability - next_placability)/current_placability,0)
-
-        # penalty for placing pieces in the center (0-1 -> low to high penalisation)
-        current_centricity=(current_state.board*mid_penalty_matrix).sum()
-        next_centricity=(next_state.board*mid_penalty_matrix).sum()
-        pen_c = max((next_centricity - current_centricity)/(sums[action.p_id]*5),0)
-
-        #penalty = (self.ALPHA * pen_a) + (1 - self.ALPHA) * ((self.BETA * pen_b) + (1 - self.BETA) * pen_c)
-        penalty = max(pen_a, pen_b, pen_c)
-
-        #if session_score > 10:
-        #print('**'*25)
-        #print(next_state.board)
-        #print(pieces[action.p_id])
-        #print(action.pos)
-        #print('%i,%.2f,%.2f,%.2f,%.2f|%.2f'%(session_score, pen_a, pen_b, pen_c, penalty, session_score * (1 - penalty)))
-        #print('**' * 25)
-        # center board penalty
-
-        #build the penalty
-
-        #(self.BETA * ((board * mid_penalty_matrix).sum()/mid_penalty_matrix.sum())) + \
-        #          ((1 - self.BETA) * ((holes+isles)/100))
-        #print(np.logical_not(mask[0]).astype(int))
-        #print(session_score, penalty, session_score * (1 - penalty))
-        #print(session_score, penalty, session_score * (1 - penalty))
-        #return (session_score * (1 - pen_a)) - self.ALPHA * ((self.BETA * pen_b) + ((1-self.BETA) * pen_c))
-
-        return session_score * (1 - penalty)
+        return session_score * penalty
 
     def update_target(self):
         # soft update
@@ -219,49 +177,11 @@ class Agent(object):
         reward = torch.tensor([reward], dtype=torch.float).to(self.device)
         self.memory.push(state, torch.tensor(action).unsqueeze(0), next_state, reward)
 
-#TBD
-    def init_memory(self, target_path):
-
-        if not os.path.exists(target_path):
-            return
-        print('initializing memory from: '+target_path)
-        i = 0
-        for file in os.listdir(target_path):
-
-            file_path = os.path.join(target_path, file)
-
-            with open(file_path, 'r') as r_file:
-                for line in r_file:
-                    if line == 'act_p_id|act_pos_i|act_pos_j|reward|s_p0|s_p1|s_p2|board_state\n':
-                        continue
-                    act_p_id, act_pos_i, act_pos_j, reward, s_p0, s_p1, s_p2, board_state = line.split('|')
-                    board_state = board_state.replace('\n', '').replace(']', '').replace('[', '')
-                    reward, s_p0, s_p1, s_p2 = int(reward), int(s_p0), int(s_p1), int(s_p2)
-                    board_state = np.fromstring(board_state, sep=' ').reshape((10, 10))
-
-                    state = make_state(board_state, [s_p0, s_p1, s_p2])
-                    state_repr, state_mask = state.repr, state.mask
-
-                    state_repr = state_repr.to(self.device)
-                    state_mask = state_mask.to(self.device)
-
-                    # not a starting state
-                    if 'reward' in self.mem_cache:
-                        self.mem_cache['next_state'] = state_repr
-                        self.mem_cache['next_state_mask'] = state_mask
-                        self._push_cache()
-
-                    self.mem_cache['state'] = state_repr
-                    action = torch.tensor(int(act_p_id+act_pos_i+act_pos_j)).to(self.device)
-                    self.mem_cache['action'] = action.unsqueeze(0)
-                    self.mem_cache['reward'] = torch.tensor([reward], dtype=torch.float).to(self.device)
-                    #print(board_state)
-
-            self.mem_cache = {}
 
     def save_model(self, path):
         torch.save({
             'epoch': self.games_played,
+            'actions_taken': self.actions_taken,
             'policy_net_state_dict': self.policy_net.state_dict(),
             'target_net_state_dict': self.target_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -270,9 +190,11 @@ class Agent(object):
 
     def load_model(self, path):
         checkpoint = torch.load(path)
-        self.games_played = checkpoint['policy_net_state_dict']
+        self.games_played = checkpoint['epoch']
+        self.actions_taken = checkpoint['actions_taken']
         self.policy_net.load_state_dict(checkpoint['policy_net_state_dict'])
         self.target_net.load_state_dict(checkpoint['target_net_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.loss.load_state_dict(checkpoint['loss_state_dict'])
+
 
