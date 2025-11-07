@@ -48,9 +48,9 @@ class mainNN(torch.nn.Module):
         #    torch.nn.ReLU(),
         #    torch.nn.Linear(256, 128),
         #    torch.nn.ReLU(),
-        #    torch.nn.Linear(128, 128),
+        #    torch.nn.Linear(128, 64),
         #    torch.nn.ReLU(),
-        #    torch.nn.Linear(128, 1)
+        #    torch.nn.Linear(64, 1)
         #)
 
     def forward(self, x):

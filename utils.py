@@ -1,6 +1,7 @@
 import numpy as np
 import random as rd
 import torch
+import math
 from collections import namedtuple
 
 pieces = [
@@ -25,6 +26,14 @@ pieces = [
     np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]]),
 ]
 
+edge_kernels = [
+    np.array([[-1, -1], [1, -1]]),
+    np.array([[-1, -1], [-1, 1]]),
+    np.array([[-1, 1], [-1, -1]]),
+    np.array([[1, -1], [-1, -1]]),
+    np.array([[1, -1], [-1, 1]])
+]
+
 wheres = [np.where(piece == 1) for piece in pieces]
 sums = np.array([piece.sum() for piece in pieces])
 
@@ -35,10 +44,17 @@ transformed_pieces = \
     np.array([np.fft.fft2(np.pad(p, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
               for p in pieces])
 
+transformed_kernels = \
+    np.array([np.fft.fft2(np.pad(k, ((10, 10), (10, 10)), mode='constant', constant_values=[0])[10:20, 10:20])
+              for k in edge_kernels])
+
 # An action consists in three components: an id referencing a piece (p) and the target position i,j on the board (b)
 Position = namedtuple("Position", ["i", "j"])
 Action = namedtuple("Action", ["p_id", "pos"])
 State = namedtuple("State", ["board", "pieces"])
+
+def sigmoid(x):
+    return 1 / (1 + math.exp(-0.1 * x))
 
 def get_pieces():
     return rd.choices(range(len(pieces)), k=3)
@@ -131,6 +147,15 @@ def random_valid_action(state: State):
     i, j = divmod(pos, 10)
     return Action(p_id, Position(i, j))
 
+def count_corners(board):
+
+    board_trans = np.fft.fft2(board)
+    board_conv = np.fft.ifft2(board_trans * np.conj(transformed_kernels))
+    outer_corners = (np.real(board_conv[:4]*base_position_mask[10]) >= (1-0.01)).sum()
+    inner_corners = (np.real(board_conv[:4]*base_position_mask[10]) <= (-3+0.01)).sum()
+    corner_transmissions = (np.abs(np.real(board_conv[4])*base_position_mask[10]) >= (2-0.01)).sum()
+
+    return outer_corners + inner_corners + 2 * corner_transmissions
 
 mid_penalty_matrix = np.array([
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],

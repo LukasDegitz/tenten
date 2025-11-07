@@ -22,7 +22,7 @@ agent = Agent(device=device)
 #continue training
 continue_from_cp = False
 continue_path = os.path.join('res')
-continue_cp = os.path.join(continue_path, 'xx_cp.pt')
+continue_cp = os.path.join(continue_path, '251102_212124_cp.pt')
 
 if continue_from_cp:
 
