@@ -20,9 +20,12 @@ print('initializing agent')
 agent = Agent(device=device)
 
 #continue training
-continue_from_cp = False
+continue_from_cp = True
 continue_path = os.path.join('res')
-continue_cp = os.path.join(continue_path, '251102_212124_cp.pt')
+continue_cp = os.path.join(continue_path, '251107_235510_cp.pt'
+                                          ''
+                                          ''
+                                          ' ')
 
 if continue_from_cp:
 

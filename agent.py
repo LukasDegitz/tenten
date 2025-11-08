@@ -1,5 +1,5 @@
 from dql import D3QN, ReplayMemory, Transition
-from utils import mid_penalty_matrix, sums, count_corners
+from utils import gaussian2d, sums, count_corners
 import torch
 import random
 import math
@@ -18,11 +18,14 @@ class Agent(object):
     actions_taken = None
     games_played = None #eps
 
-    # training params
+    # penalty params
     ALPHA = None
     BETA = None
     GAMMA = None
     DELTA = None
+    EPSILON = None
+
+    # training params
     BATCH_SIZE = None
     RHO = None
     EPS_START = None
@@ -30,13 +33,15 @@ class Agent(object):
     EPS_DECAY = None
 
     def __init__(self, device='cuda', batch_size=64, rho=0.99, eps_start=0.9,
-                 eps_end=0.05, eps_decay=10000, lr=1e-4, alpha=1, beta=1, gamma=0.4, delta=1,  tau=0.005):
+                 eps_end=0.05, eps_decay=10000, lr=3e-4, tau=0.005,
+                 alpha=1, beta=1, gamma=0.4, delta=1, epsilon=1):
         #lr for small 1e-4, lr for beeg 3e-4
 
         self.ALPHA = alpha #Penalty for a "full board"
         self.BETA = beta  #full board trade of between placability and centeredness
         self.GAMMA = gamma
         self.DELTA = delta
+        self.EPSILON = epsilon
         self.TAU = tau
 
         self.device = device
@@ -141,28 +146,35 @@ class Agent(object):
         #pen_a: change in piece placeability  (0-1 -> low to high penalisation)
         current_placeability = ((current_mask.sum(axis=(1, 2)) * sums).sum())
         next_placeability = ((next_mask.sum(axis=(1, 2)) * sums).sum())
-        pen_a = 2 * (current_placeability - next_placeability)/current_placeability
+        pen_a = 4 * (current_placeability - next_placeability)/current_placeability
 
         # pen_b number of holes
         _, current_holes = label(np.logical_not(current_state.board).astype(int))
         _, next_holes = label(np.logical_not(next_state.board).astype(int))
-        pen_b = (next_holes - current_holes) / max(((6-current_holes), 2))
+        pen_b = (next_holes - current_holes) / max(((8-current_holes), 2))
 
         # pen_c: change in board center occupation (0-1 -> low to high penalisation)
-        current_centricity = (current_state.board*mid_penalty_matrix).sum()
-        next_centricity = (next_state.board*mid_penalty_matrix).sum()
+        current_centricity = (current_state.board*gaussian2d).sum()
+        next_centricity = (next_state.board*gaussian2d).sum()
         #print('current: %.2f, next: %.2f' % (current_centricity, next_centricity))
-        pen_c = (next_centricity - current_centricity)/((sums[action.p_id]*5)+(next_state.board.sum()+1))
+        pen_c = (next_centricity - current_centricity)/(sums[action.p_id])
 
         #pen_d number of corners
         current_corners = count_corners(current_state.board)
         next_corners = count_corners(next_state.board)
-        pen_d = (next_corners - current_corners) / max(((20-current_corners), current_corners))
+        pen_d = (next_corners - current_corners) / max(((20-current_corners), 6))
+
+        #pend_e number of isles
+        _, current_isles = label(current_state.board)
+        _, next_isles = label(next_state.board)
+        pen_e = (next_isles - current_isles) / max(((12 - current_isles), 2))
 
         # penalize biggest penalty of all three full, and parameterized average of others
-        penalty = (self.ALPHA * pen_a) + (self.BETA * pen_b) + (self.GAMMA * pen_c) + (self.DELTA * pen_d)
+        penalty = (self.ALPHA * pen_a) + (self.BETA * pen_b) + (self.GAMMA * pen_c) + (self.DELTA * pen_d) \
+                  + (self.EPSILON * pen_e)
 
-        #print('%i, a: %.2f, b: %.2f,c: %.2f, d:%.2f, pen: %.2f | rew: %.2f'%(session_score,pen_a, pen_b, pen_c, pen_d, penalty, 1-penalty))
+        #print('%i, a: %.2f, b: %.2f,c: %.2f, d:%.2f e:%.2f, pen: %.2f | rew: %.2f'
+        #      %(session_score, pen_a, pen_b, pen_c, pen_d, pen_e, penalty, 1-penalty))
 
         return 1 - penalty
 

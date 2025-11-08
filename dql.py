@@ -27,24 +27,10 @@ class mainNN(torch.nn.Module):
 
         self.device = device
 
-        self.lin = torch.nn.Sequential(
-            torch.nn.Linear(219, 512),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 256),
-            torch.nn.ReLU(),
-            torch.nn.Linear(256, 128),
-            torch.nn.ReLU(),
-            torch.nn.Linear(128, 64),
-            torch.nn.ReLU(),
-            torch.nn.Linear(64, 1)
-        )
-
         #self.lin = torch.nn.Sequential(
-        #    torch.nn.Linear(2138, 4096),
+        #    torch.nn.Linear(219, 512),
         #    torch.nn.ReLU(),
-        #    torch.nn.Linear(4096, 1024),
-        #    torch.nn.ReLU(),
-        #    torch.nn.Linear(1024, 256),
+        #    torch.nn.Linear(512, 256),
         #    torch.nn.ReLU(),
         #    torch.nn.Linear(256, 128),
         #    torch.nn.ReLU(),
@@ -52,6 +38,20 @@ class mainNN(torch.nn.Module):
         #    torch.nn.ReLU(),
         #    torch.nn.Linear(64, 1)
         #)
+
+        self.lin = torch.nn.Sequential(
+            torch.nn.Linear(2138, 4096),
+            torch.nn.ReLU(),
+            torch.nn.Linear(4096, 1024),
+            torch.nn.ReLU(),
+            torch.nn.Linear(1024, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 64),
+            torch.nn.ReLU(),
+            torch.nn.Linear(64, 1)
+        )
 
     def forward(self, x):
         x = x.to(self.device)
